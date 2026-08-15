@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aurora VHF</title>
+<style>
+:root{
+  --panel:#2a2a2d; --panel-head:#35353a; --panel-alt:#232326; --line:#47474e; --line-soft:#3a3a40;
+  --text:#e6e6e8; --text-dim:#a4a4ac; --text-faint:#6c6c74; --accent:#e0912e; --danger:#e2495a; --ok:#37c871;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --sans: "Segoe UI", Tahoma, Arial, sans-serif;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; height:100%; background:var(--panel-alt); color:var(--text); font-family:var(--sans); font-size:13px; }
+.wrap{ display:flex; flex-direction:column; height:100vh; }
+.head{ display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--panel-head); border-bottom:1px solid var(--line); }
+.head .led{ width:9px; height:9px; border-radius:50%; background:#3a3a3a; box-shadow:inset 0 0 0 1px #000; flex:0 0 auto; }
+.head .led.on{ background:var(--ok); box-shadow:0 0 6px var(--ok); }
+.head input{ background:var(--panel-alt); border:1px solid var(--line); color:var(--text); padding:4px 6px;
+  border-radius:2px; font-family:var(--mono); font-size:12px; width:120px; }
+.btn{ background:var(--panel-alt); color:var(--text); border:1px solid var(--line); border-radius:2px;
+  padding:5px 12px; font-size:12px; cursor:pointer; }
+.btn:hover{ background:#3a3a41; border-color:#5a5a62; }
+.btn.primary{ background:#245b32; border-color:#37864b; color:#c9f5d4; }
+.btn.danger{ background:#5b2427; border-color:#863738; color:#f5c9cc; }
+.body{ flex:1; display:flex; flex-direction:column; padding:14px; gap:12px; overflow:auto; }
+.freq-row{ display:flex; align-items:center; gap:10px; justify-content:center; }
+.freq-spin{ display:flex; flex-direction:column; gap:3px; }
+.freq-spin button{ width:34px; height:26px; background:var(--panel); border:1px solid var(--line); color:var(--text);
+  font-size:14px; cursor:pointer; border-radius:2px; }
+.freq-display{ font-family:var(--mono); font-size:38px; font-weight:700; background:var(--panel); border:1px solid var(--line);
+  padding:8px 22px; border-radius:4px; text-align:center; letter-spacing:.03em; color:var(--text); outline:none; width:220px; }
+.freq-display:focus{ border-color:var(--accent); }
+.ptt-btn{ font-size:20px; font-weight:800; letter-spacing:.05em; padding:26px; border-radius:8px;
+  background:var(--panel); border:2px solid var(--line); color:var(--text); cursor:pointer; user-select:none; text-align:center; }
+.ptt-btn.tx{ background:#5b2427; border-color:var(--danger); color:#ffc9cd; box-shadow:0 0 22px rgba(226,73,90,.6); }
+.keybind{ display:flex; align-items:center; justify-content:center; gap:8px; font-size:11px; color:var(--text-dim); }
+.hint{ font-size:10.5px; color:var(--text-faint); text-align:center; line-height:1.5; }
+.users-title{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint); margin-top:4px; }
+.users{ display:flex; flex-direction:column; gap:2px; font-family:var(--mono); font-size:12px; color:#9be89b; }
+.log{ margin-top:auto; font-size:10px; color:var(--text-faint); font-family:var(--mono); max-height:60px; overflow-y:auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <span class="led" id="led-fb" title="Firebase"></span>
+    <input id="in-callsign" type="text" placeholder="Callsign" spellcheck="false" />
+    <span style="flex:1;"></span>
+    <button class="btn primary" id="btn-connect">Connecter</button>
+    <button class="btn danger" id="btn-disconnect" style="display:none;">Déconnecter</button>
+  </div>
+  <div class="body">
+    <div class="freq-row">
+      <input type="text" id="freq-display" class="freq-display" value="118.650" inputmode="decimal" spellcheck="false" title="Tapez la fréquence puis Entrée" />
+      <button class="btn" id="freq-set">Régler</button>
+    </div>
+    <button class="ptt-btn" id="ptt-btn">🎙️ PTT</button>
+    <div class="keybind">
+      Touche : <b id="ptt-key">\</b>
+      <button class="btn" id="ptt-bind">Changer</button>
+    </div>
+    <div class="hint" id="ptt-hint">Maintenez le bouton ou la touche pour transmettre.</div>
+    <div class="users-title">Sur cette fréquence</div>
+    <div class="users" id="users"></div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-database-compat.min.js"></script>
+<!-- Même fichier de config que le client ATC complet : mêmes identifiants Firebase. -->
+<script src="aurora-config.js"></script>
+<script src="aurora_vhf.js"></script>
+</body>
+</html>

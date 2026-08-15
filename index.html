@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sector Manager — Gestion des secteurs ATC</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+
+<style>
+  :root{
+    --bg:            #060a10;
+    --panel:         rgba(14, 20, 29, 0.86);
+    --panel-solid:   #0e141d;
+    --line:          #1c2634;
+    --text:          #e7edf5;
+    --text-dim:      #8393a8;
+    --text-faint:    #55637a;
+    --accent:        #35f0a1;
+    --accent-dim:    #1f6f52;
+    --danger:        #ff5c6c;
+
+    --ctr:  #4f8cff;
+    --app:  #ffb23e;
+    --twr:  #ff5c6c;
+    --gnd:  #35d07f;
+
+    --radius: 14px;
+    --radius-sm: 8px;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html, body{
+    margin:0; padding:0; height:100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+  }
+
+  /* ---------- Carte ---------- */
+  #map{ position: fixed; inset: 0; background: var(--bg); }
+
+  .leaflet-tile-pane{
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.95) saturate(0.6);
+  }
+  .leaflet-container{ background: var(--bg); font-family: var(--sans); }
+  .leaflet-control-attribution{
+    background: rgba(6,10,16,0.7) !important;
+    color: var(--text-faint) !important;
+    font-size: 10px !important;
+  }
+  .leaflet-control-attribution a{ color: var(--text-dim) !important; }
+  .leaflet-draw.leaflet-control{ display:none; }
+
+  #map::before{
+    content:"";
+    position:absolute; inset:0;
+    pointer-events:none;
+    z-index: 399;
+    background-image: radial-gradient(circle at 50% 50%, transparent 0%, rgba(6,10,16,0.35) 100%);
+  }
+
+  /* Marqueurs de points RNAV */
+  .wpt-marker{
+    display:flex; flex-direction:column; align-items:center;
+    pointer-events:none;
+  }
+  .wpt-diamond{
+    width:9px; height:9px;
+    background: #c98bff;
+    border: 1px solid #7a3fbf;
+    transform: rotate(45deg);
+    box-shadow: 0 0 6px rgba(201,139,255,0.7);
+  }
+  .wpt-label{
+    margin-top: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: #e6cfff;
+    text-shadow: 0 0 3px #000, 0 0 3px #000;
+    white-space: nowrap;
+  }
+
+  /* ---------- Bandeau supérieur ---------- */
+  header{
+    position: fixed; top: 14px; left: 14px; right: 14px; height: 58px;
+    z-index: 1000;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px;
+    background: var(--panel);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .radar-icon{
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 1.5px solid var(--accent-dim);
+    position: relative; overflow: hidden;
+    background: repeating-radial-gradient(circle, rgba(53,240,161,0.08) 0 1px, transparent 1px 8px);
+  }
+  .radar-icon::after{
+    content:""; position:absolute; top:50%; left:50%;
+    width:50%; height:2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    transform-origin: left center;
+    animation: sweep 3s linear infinite;
+  }
+  @keyframes sweep{ from{ transform: rotate(0deg);} to{ transform: rotate(360deg);} }
+
+  .brand h1{ font-size: 15px; font-weight: 700; letter-spacing: 0.06em; margin: 0; color: var(--text); }
+  .brand span{ display:block; font-size: 10.5px; color: var(--text-dim); letter-spacing: 0.08em; font-family: var(--mono); }
+
+  .header-right{ display:flex; align-items:center; gap:16px; }
+
+  .fb-status{ display:flex; align-items:center; gap:7px; font-size:11px; font-family: var(--mono); color: var(--text-faint); }
+  .fb-status .dot{ width:7px; height:7px; border-radius:50%; background: var(--danger); box-shadow:0 0 6px var(--danger); }
+  .fb-status.online .dot{ background: var(--accent); box-shadow:0 0 6px var(--accent); }
+
+  .clock{ font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 0.05em; text-align:right; }
+  .clock small{ display:block; color: var(--text-faint); font-size: 9.5px; letter-spacing: 0.1em; }
+
+  .btn{
+    font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--line); background: rgba(255,255,255,0.03); color: var(--text);
+    padding: 8px 14px; border-radius: 9px; cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, transform .1s ease;
+    white-space: nowrap;
+  }
+  .btn:hover{ border-color: var(--accent-dim); background: rgba(53,240,161,0.06); }
+  .btn:active{ transform: translateY(1px); }
+  .btn:disabled{ opacity:0.4; cursor:not-allowed; transform:none; }
+  .btn-primary{ background: var(--accent); color: #06170f; border-color: var(--accent); }
+  .btn-primary:hover{ background:#4bf7ae; border-color:#4bf7ae; }
+  .btn-ghost{ background: transparent; }
+  .btn-danger{ color: var(--danger); border-color: rgba(255,92,108,0.3); }
+  .btn-danger:hover{ background: rgba(255,92,108,0.08); border-color: var(--danger); }
+  .btn-sm{ padding: 6px 10px; font-size: 11.5px; border-radius: 7px; width:100%; text-align:left; }
+  .btn-block{ width:100%; margin-top:6px; }
+
+  /* ---------- Bouton flottant "Dessiner" ---------- */
+  #draw-btn{
+    position: fixed; left: 14px; bottom: 20px; z-index: 1000;
+    display:flex; align-items:center; gap:10px;
+    padding: 13px 20px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  #draw-btn.active{ background: var(--danger); border-color: var(--danger); color: #2a0509; }
+  #draw-btn svg{ width:16px; height:16px; }
+
+  #draw-hint{
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 1000;
+    padding: 8px 16px; background: var(--panel);
+    backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: 999px;
+    font-size: 12px; color: var(--text-dim); display: none;
+  }
+  #draw-hint.visible{ display:block; }
+  #draw-hint b{ color: var(--accent); font-family: var(--mono); }
+
+  /* ---------- Panneau latéral ---------- */
+  #sidebar{
+    position: fixed; top: 88px; bottom: 14px; right: 14px; width: 372px; z-index: 900;
+    background: var(--panel);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #sidebar-scroll{ overflow-y:auto; flex:1; display:flex; flex-direction:column; min-height:0; }
+  #sidebar-scroll::-webkit-scrollbar{ width:6px; }
+  #sidebar-scroll::-webkit-scrollbar-thumb{ background: var(--line); border-radius: 3px; }
+
+  .panel-section{ padding: 16px 18px; border-bottom: 1px solid var(--line); flex-shrink:0; }
+  .panel-section:last-child{ border-bottom:none; }
+
+  .section-label{
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--text-faint);
+    margin: 0 0 10px 0; text-transform: uppercase;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+
+  .legend-row{ display:flex; align-items:center; gap:10px; font-size: 12.5px; color: var(--text-dim); padding: 4px 0; }
+  .dot{ width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+  .legend-row b{ color: var(--text); font-family: var(--mono); font-weight:600; width:38px; }
+
+  .field{ margin-bottom: 14px; }
+  .field label{ display:block; font-size: 11px; color: var(--text-dim); margin-bottom: 6px; letter-spacing: 0.03em; }
+  .field input, .field select{
+    width: 100%; background: #0a0f16; border: 1px solid var(--line); color: var(--text);
+    font-family: var(--mono); font-size: 13px; padding: 9px 11px; border-radius: var(--radius-sm);
+    outline: none; transition: border-color .15s ease;
+  }
+  .field select{ font-family: var(--sans); }
+  .field input:focus, .field select:focus{ border-color: var(--accent); box-shadow: 0 0 0 3px rgba(53,240,161,0.12); }
+  .field .error{ display:none; font-size: 11px; color: var(--danger); margin-top: 6px; font-family: var(--sans); }
+  .field.invalid input{ border-color: var(--danger); }
+  .field.invalid .error{ display:block; }
+  .field .hint{ font-size: 10.5px; color: var(--text-faint); margin-top: 6px; }
+
+  .type-preview{
+    display: inline-flex; align-items:center; gap: 6px; margin-top: 8px;
+    font-size: 11px; font-family: var(--mono); padding: 4px 9px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--text-faint);
+  }
+  .type-preview .dot{ width:8px; height:8px; }
+
+  .form-actions{ display:flex; gap: 8px; margin-top: 18px; }
+  .form-actions .btn{ flex:1; }
+
+  #form-panel{ display:none; }
+  #form-panel.visible{ display:block; }
+  #default-panels{ display:contents; }
+  #form-panel.visible ~ #default-panels{ display:none; }
+
+  #zone-count{ color: var(--text-faint); font-weight:400; text-transform:none; letter-spacing:normal; }
+  #list-panel{ display:flex; flex-direction:column; min-height:0; flex:1; }
+  #zone-list{ overflow-y: auto; margin-top: -4px; }
+  #zone-list::-webkit-scrollbar{ width:6px; }
+  #zone-list::-webkit-scrollbar-thumb{ background: var(--line); border-radius: 3px; }
+
+  .zone-empty{ text-align:center; color: var(--text-faint); font-size: 12px; padding: 30px 10px; line-height:1.6; }
+
+  .zone-card{
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+    background: rgba(255,255,255,0.015); cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .zone-card:hover{ border-color: var(--accent-dim); background: rgba(53,240,161,0.04); }
+  .zone-card.highlight{ border-color: var(--accent); }
+
+  .zone-card-top{ display:flex; align-items:center; justify-content:space-between; }
+  .zone-callsign{ font-family: var(--mono); font-weight: 700; font-size: 13px; display:flex; align-items:center; gap:8px; }
+  .zone-actions{ display:flex; gap:4px; }
+  .icon-btn{
+    width: 24px; height:24px; display:flex; align-items:center; justify-content:center;
+    border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-faint); cursor: pointer;
+  }
+  .icon-btn:hover{ color: var(--text); border-color: var(--line); background: rgba(255,255,255,0.04); }
+  .icon-btn.danger:hover{ color: var(--danger); border-color: rgba(255,92,108,0.3); }
+  .icon-btn svg{ width:13px; height:13px; }
+
+  .zone-meta{ display:flex; gap: 12px; margin-top: 6px; flex-wrap:wrap; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+  .zone-meta span b{ color: var(--text-faint); font-family: var(--sans); font-weight:500; }
+
+  .badge{ font-size: 9.5px; font-family: var(--mono); padding: 2px 6px; border-radius: 5px; border: 1px solid currentColor; letter-spacing: 0.04em; }
+  .badge-official{ color:#8bb8ff; }
+  .badge-openaip{ color:#ffcf8b; }
+
+  .official-note{ font-size: 11px; color: var(--text-faint); line-height:1.6; margin-top:10px; }
+  .checkbox-row{ display:flex; align-items:center; gap:8px; margin-top:10px; font-size:12.5px; color:var(--text-dim); }
+  .checkbox-row input{ accent-color: var(--accent); width:14px; height:14px; }
+
+  #toast{
+    position: fixed; left: 50%; top: 88px; transform: translateX(-50%) translateY(-12px); z-index: 1200;
+    background: var(--panel-solid); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; font-size: 12.5px; color: var(--text);
+    opacity: 0; pointer-events:none; transition: opacity .2s ease, transform .2s ease;
+    max-width: 420px; text-align:center;
+  }
+  #toast.visible{ opacity:1; transform: translateX(-50%) translateY(0); pointer-events:auto; }
+  #toast.error{ border-color: rgba(255,92,108,0.4); color: var(--danger); }
+
+  input[type=file]{ display:none; }
+
+  @media (max-width: 760px){
+    #sidebar{ left:14px; width:auto; }
+    .clock{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<header>
+  <div class="brand">
+    <div class="radar-icon"></div>
+    <div>
+      <h1>SECTOR MANAGER</h1>
+      <span>ADMIN · DÉFINITION DES SECTEURS ATC</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="fb-status" id="fb-status"><span class="dot"></span><span id="fb-status-text">Firebase hors ligne</span></div>
+    <div class="clock" id="clock">--:--:--<small>UTC</small></div>
+    <button class="btn" id="export-btn">Exporter</button>
+    <button class="btn" id="import-btn">Importer</button>
+    <input type="file" id="import-input" accept="application/json">
+  </div>
+</header>
+
+<button class="btn btn-primary" id="draw-btn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon></svg>
+  <span id="draw-btn-label">Dessiner un secteur</span>
+</button>
+<div id="draw-hint">Cliquez sur la carte pour placer les points · <b>Entrée</b> ou double-clic pour terminer · <b>Échap</b> pour annuler</div>
+
+<aside id="sidebar">
+ <div id="sidebar-scroll">
+
+  <div class="panel-section">
+    <p class="section-label">Légende</p>
+    <div class="legend-row"><span class="dot" style="background:var(--ctr)"></span><b>_CTR</b> Centre (en-route)</div>
+    <div class="legend-row"><span class="dot" style="background:var(--app)"></span><b>_APP</b> Approche</div>
+    <div class="legend-row"><span class="dot" style="background:var(--twr)"></span><b>_TWR</b> Tour</div>
+    <div class="legend-row"><span class="dot" style="background:var(--gnd)"></span><b>_GND</b> Sol</div>
+  </div>
+
+  <!-- Formulaire de création / édition -->
+  <div class="panel-section" id="form-panel">
+    <p class="section-label" id="form-title">Nouveau secteur</p>
+
+    <div class="field" id="field-callsign">
+      <label for="input-callsign">Callsign de la zone</label>
+      <input id="input-callsign" type="text" placeholder="ex : LFFF_CTR, LFPG_TWR" autocomplete="off" spellcheck="false">
+      <div class="error">Le callsign doit se terminer par _CTR, _APP, _TWR ou _GND.</div>
+      <div id="type-preview" class="type-preview" style="display:none;">
+        <span class="dot"></span><span id="type-preview-text"></span>
+      </div>
+    </div>
+
+    <div class="field" id="field-rating">
+      <label for="input-rating">Rating minimum requis</label>
+      <select id="input-rating">
+        <option value="OBS">OBS — Observateur</option>
+        <option value="AS1">AS1 — ATC Stagiaire 1</option>
+        <option value="AS2">AS2 — ATC Stagiaire 2</option>
+        <option value="AS3" selected>AS3 — ATC Stagiaire 3</option>
+        <option value="ADC">ADC — Contrôleur Aérodrome (Tour)</option>
+        <option value="APC">APC — Contrôleur Approche</option>
+        <option value="ACC">ACC — Contrôleur Centre</option>
+        <option value="SEC">SEC — Superviseur</option>
+      </select>
+    </div>
+
+    <div class="field" id="field-frequency">
+      <label for="input-frequency">Fréquence</label>
+      <input id="input-frequency" type="text" placeholder="ex : 133.700" autocomplete="off">
+      <div class="error">Format attendu : trois chiffres, un point, trois chiffres (ex : 118.275).</div>
+      <div class="hint">MHz, espacement 8.33/25 kHz</div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="cancel-btn">Annuler</button>
+      <button class="btn btn-primary" id="save-btn">Enregistrer le secteur</button>
+    </div>
+  </div>
+
+  <div id="default-panels">
+
+    <!-- Zones officielles / données réelles -->
+    <div class="panel-section">
+      <p class="section-label">Zones officielles (données réelles)</p>
+      <button class="btn btn-sm" id="import-vatspy-btn">▣ Importer FIR / CTR / NAT — zone visible (VATSIM)</button>
+      <button class="btn btn-sm btn-block" id="import-openaip-btn">▣ Importer TMA / CTR aérodrome — zone visible (OpenAIP)</button>
+      <label class="checkbox-row">
+        <input type="checkbox" id="waypoints-toggle">
+        Afficher les points RNAV (OpenAIP)
+      </label>
+      <p class="official-note">
+        Les FIR/CTR en-route et le NAT (Shanwick, Gander…) viennent des données publiques VATSIM
+        (aucune clé requise). Les TMA et zones de contrôle d'aérodrome viennent d'OpenAIP
+        (clé gratuite requise, voir <code>firebase-config.js</code>) — approche = TMA, tour = CTR
+        aérodrome. <b>Sol et Delivery n'ont pas de source publique fiable</b> : créez-les à la main
+        avec « Dessiner un secteur ».
+      </p>
+    </div>
+
+    <!-- État vide -->
+    <div class="panel-section" id="empty-state" style="text-align:center;">
+      <p style="font-size:12px; color:var(--text-dim); line-height:1.6; margin:4px 0 0 0;">
+        Cliquez sur <b style="color:var(--text)">« Dessiner un secteur »</b> ou importez des zones
+        officielles ci-dessus.
+      </p>
+    </div>
+
+    <!-- Liste des secteurs -->
+    <div class="panel-section" id="list-panel">
+      <p class="section-label">Secteurs définis <span id="zone-count">(0)</span></p>
+      <div id="zone-list">
+        <div class="zone-empty" id="zone-empty-msg">Aucun secteur pour le moment.</div>
+      </div>
+    </div>
+
+  </div>
+ </div>
+</aside>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+<!-- SDK Firebase (compat, utilisable sans bundler) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-database-compat.min.js"></script>
+
+<!-- Identifiants Firebase + clé OpenAIP : fichier séparé, à compléter, jamais commité -->
+<script src="firebase-config.js"></script>
+
+<script>
+(function(){
+  "use strict";
+
+  // ============================================================
+  // Constantes
+  // ============================================================
+  const TYPE_COLORS = { CTR: "#4f8cff", APP: "#ffb23e", TWR: "#ff5c6c", GND: "#35d07f" };
+  const TYPE_LABELS = { CTR: "Centre (en-route)", APP: "Approche", TWR: "Tour", GND: "Sol" };
+  const CALLSIGN_RE = /^[A-Z0-9]+_(CTR|APP|TWR|GND)$/;
+  const FREQ_RE = /^1\d{2}\.\d{3}$/;
+  const VATSPY_BOUNDARIES_URL = "https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/Boundaries.geojson";
+  const OPENAIP_BASE = "https://api.core.openaip.net/api";
+
+  // ============================================================
+  // Carte
+  // ============================================================
+  const map = L.map("map", { zoomControl: false, worldCopyJump: true }).setView([46.6, 2.4], 6);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+
+  const drawnItems = new L.FeatureGroup();
+  map.addLayer(drawnItems);
+
+  const waypointsLayer = L.layerGroup();
+  let waypointsEnabled = false;
+  let waypointsTimer = null;
+
+  const drawPolygon = new L.Draw.Polygon(map, {
+    shapeOptions: { color: "#35f0a1", weight: 2, fillOpacity: 0.08 },
+    showArea: false
+  });
+
+  // ============================================================
+  // État applicatif
+  // ============================================================
+  let zones = [];          // { id, key(=callsign), callsign, type, rating, frequency, source, layer }
+  let pendingLayer = null; // polygone tout juste dessiné, pas encore enregistré
+  let editingId = null;    // id de la zone en cours d'édition (metadata only)
+  let idCounter = 1;
+  let vatspyCache = null;  // cache du GeoJSON VATSIM (téléchargé une seule fois)
+
+  // ============================================================
+  // Firebase
+  // ============================================================
+  let db = null;
+  let firebaseReady = false;
+
+  function initFirebase(){
+    const cfg = window.FIREBASE_CONFIG;
+    if (!cfg || !cfg.databaseURL || /votre-projet/.test(cfg.databaseURL)) {
+      setFirebaseStatus(false, "Firebase non configuré");
+      showToast("Complétez firebase-config.js pour activer la sauvegarde des secteurs.", true);
+      return;
+    }
+    try {
+      firebase.initializeApp(cfg);
+      db = firebase.database();
+      db.ref(".info/connected").on("value", (snap) => {
+        firebaseReady = !!snap.val();
+        setFirebaseStatus(firebaseReady, firebaseReady ? "Firebase connecté" : "Connexion...");
+      });
+      db.ref("sectors").on("value", (snap) => syncZonesFromFirebase(snap.val()));
+      db.ref("sectors").once("value").catch((err) => {
+        showToast("Erreur d'accès à la base : " + err.message, true);
+      });
+    } catch (err) {
+      setFirebaseStatus(false, "Erreur Firebase");
+      showToast("Erreur d'initialisation Firebase : " + err.message, true);
+    }
+  }
+
+  function setFirebaseStatus(online, text){
+    const el = $("fb-status");
+    el.classList.toggle("online", !!online);
+    $("fb-status-text").textContent = text;
+  }
+
+  // ============================================================
+  // Éléments DOM
+  // ============================================================
+  const $ = (id) => document.getElementById(id);
+  const drawBtn = $("draw-btn");
+  const drawBtnLabel = $("draw-btn-label");
+  const drawHint = $("draw-hint");
+  const formPanel = $("form-panel");
+  const formTitle = $("form-title");
+  const inputCallsign = $("input-callsign");
+  const inputRating = $("input-rating");
+  const inputFrequency = $("input-frequency");
+  const fieldCallsign = $("field-callsign");
+  const fieldFrequency = $("field-frequency");
+  const typePreview = $("type-preview");
+  const typePreviewText = $("type-preview-text");
+  const zoneList = $("zone-list");
+  const zoneCount = $("zone-count");
+  const zoneEmptyMsg = $("zone-empty-msg");
+  const toast = $("toast");
+
+  // ============================================================
+  // Utilitaires
+  // ============================================================
+  function showToast(message, isError){
+    toast.textContent = message;
+    toast.className = "visible" + (isError ? " error" : "");
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => { toast.className = ""; }, 3200);
+  }
+
+  function getType(callsign){
+    const m = /_([A-Z]+)$/.exec(callsign);
+    return m ? m[1] : null;
+  }
+
+  function isValidCallsign(callsign){
+    return CALLSIGN_RE.test(callsign);
+  }
+
+  function updateTypePreview(){
+    const cs = inputCallsign.value.trim().toUpperCase();
+    const type = getType(cs);
+    if (type && TYPE_COLORS[type]) {
+      typePreview.style.display = "inline-flex";
+      typePreview.querySelector(".dot").style.background = TYPE_COLORS[type];
+      typePreviewText.textContent = TYPE_LABELS[type];
+    } else {
+      typePreview.style.display = "none";
+    }
+  }
+
+  // Extrait le premier anneau extérieur d'une géométrie GeoJSON (Polygon ou
+  // MultiPolygon) sous forme de tableau de [lat, lng] pour Leaflet.
+  // Limite connue : pour un MultiPolygon (FIR avec plusieurs zones
+  // disjointes), seule la première sous-zone est importée.
+  function extractOuterRing(geometry){
+    if (!geometry) return null;
+    if (geometry.type === "Polygon") return geometry.coordinates[0].map(c => [c[1], c[0]]);
+    if (geometry.type === "MultiPolygon") return geometry.coordinates[0][0].map(c => [c[1], c[0]]);
+    return null;
+  }
+
+  function slugify(text, maxLen){
+    return (text || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, maxLen || 12);
+  }
+
+  // ============================================================
+  // Mode dessin
+  // ============================================================
+  function enterDrawMode(){
+    drawPolygon.enable();
+    drawBtn.classList.add("active");
+    drawBtnLabel.textContent = "Annuler le tracé";
+    drawHint.classList.add("visible");
+  }
+
+  function exitDrawMode(){
+    drawPolygon.disable();
+    drawBtn.classList.remove("active");
+    drawBtnLabel.textContent = "Dessiner un secteur";
+    drawHint.classList.remove("visible");
+  }
+
+  drawBtn.addEventListener("click", () => {
+    if (drawBtn.classList.contains("active")) {
+      exitDrawMode();
+    } else if (formPanel.classList.contains("visible")) {
+      showToast("Terminez ou annulez le secteur en cours d'abord.", true);
+    } else {
+      enterDrawMode();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drawBtn.classList.contains("active")) exitDrawMode();
+  });
+
+  map.on(L.Draw.Event.CREATED, (e) => {
+    exitDrawMode();
+    pendingLayer = e.layer;
+    drawnItems.addLayer(pendingLayer);
+    pendingLayer.setStyle({ color: "#35f0a1", weight: 2, dashArray: "4 4", fillOpacity: 0.05 });
+    editingId = null;
+    openForm();
+  });
+
+  // ============================================================
+  // Formulaire
+  // ============================================================
+  function openForm(existingZone){
+    formPanel.classList.add("visible");
+    fieldCallsign.classList.remove("invalid");
+    fieldFrequency.classList.remove("invalid");
+
+    if (existingZone) {
+      formTitle.textContent = "Modifier le secteur";
+      inputCallsign.value = existingZone.callsign;
+      inputRating.value = existingZone.rating;
+      inputFrequency.value = existingZone.frequency;
+    } else {
+      formTitle.textContent = "Nouveau secteur";
+      inputCallsign.value = "";
+      inputRating.value = "AS3";
+      inputFrequency.value = "";
+    }
+    updateTypePreview();
+    inputCallsign.focus();
+  }
+
+  function closeForm(){
+    formPanel.classList.remove("visible");
+    if (pendingLayer && !editingId) drawnItems.removeLayer(pendingLayer);
+    pendingLayer = null;
+    editingId = null;
+  }
+
+  $("cancel-btn").addEventListener("click", closeForm);
+  inputCallsign.addEventListener("input", updateTypePreview);
+
+  $("save-btn").addEventListener("click", () => {
+    const callsign = inputCallsign.value.trim().toUpperCase();
+    const rating = inputRating.value;
+    const frequency = inputFrequency.value.trim();
+
+    let valid = true;
+    if (!isValidCallsign(callsign)) { fieldCallsign.classList.add("invalid"); valid = false; }
+    else fieldCallsign.classList.remove("invalid");
+    if (!FREQ_RE.test(frequency)) { fieldFrequency.classList.add("invalid"); valid = false; }
+    else fieldFrequency.classList.remove("invalid");
+
+    const duplicate = zones.find(z => z.callsign === callsign && z.id !== editingId);
+    if (duplicate) { fieldCallsign.classList.add("invalid"); valid = false; }
+    if (!valid) return;
+
+    const type = getType(callsign);
+
+    if (editingId) {
+      const zone = zones.find(z => z.id === editingId);
+      const oldKey = zone.key;
+      const record = {
+        callsign, type, rating, frequency,
+        source: zone.source || "custom",
+        polygon: zone.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng])
+      };
+      zone.key = callsign;
+      Object.assign(zone, record);
+      styleZoneLayer(zone);
+      bindZonePopup(zone);
+      commitZone(callsign, record);
+      if (callsign !== oldKey) removeZoneKeyFromFirebase(oldKey);
+      showToast(`Secteur ${callsign} mis à jour.`);
+    } else {
+      const record = {
+        callsign, type, rating, frequency, source: "custom",
+        polygon: pendingLayer.getLatLngs()[0].map(ll => [ll.lat, ll.lng])
+      };
+      const zone = { id: idCounter++, key: callsign, layer: pendingLayer };
+      zone.layer.on("click", () => selectZoneCard(zone.id));
+      Object.assign(zone, record);
+      zones.push(zone);
+      styleZoneLayer(zone);
+      bindZonePopup(zone);
+      commitZone(callsign, record);
+      showToast(`Secteur ${callsign} créé.`);
+    }
+
+    pendingLayer = null;
+    editingId = null;
+    formPanel.classList.remove("visible");
+    renderZoneList();
+  });
+
+  function styleZoneLayer(zone){
+    const color = TYPE_COLORS[zone.type] || "#8393a8";
+    zone.layer.setStyle({ color: color, weight: 2, fillColor: color, fillOpacity: 0.15, dashArray: null });
+  }
+
+  function bindZonePopup(zone){
+    const srcLabel = zone.source === "vatspy" ? "VATSIM (officiel)"
+      : zone.source === "openaip" ? "OpenAIP (officiel)" : "Personnalisé";
+    zone.layer.bindPopup(
+      `<div style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:#0a0f16;">`
+      + `<b style="font-size:13px;">${zone.callsign}</b><br>`
+      + `${TYPE_LABELS[zone.type]}<br>`
+      + `Rating requis : <b>${zone.rating}</b><br>`
+      + `Fréquence : <b>${zone.frequency || "—"}</b><br>`
+      + `<span style="color:#667;">${srcLabel}</span>`
+      + `</div>`
+    );
+  }
+
+  // ============================================================
+  // Persistance (Firebase si dispo, sinon local uniquement)
+  // ============================================================
+  function commitZone(key, record){
+    if (!firebaseReady || !db) return;
+    db.ref("sectors/" + key).set(record).catch((err) => {
+      showToast("Erreur d'enregistrement Firebase : " + err.message, true);
+    });
+  }
+
+  function removeZoneKeyFromFirebase(key){
+    if (!firebaseReady || !db) return;
+    db.ref("sectors/" + key).remove().catch(() => {});
+  }
+
+  function bulkCommit(recordsByKey){
+    Object.entries(recordsByKey).forEach(([key, record]) => upsertLocalZone(key, record));
+    renderZoneList();
+    if (firebaseReady && db) {
+      db.ref("sectors").update(recordsByKey).catch((err) => {
+        showToast("Erreur d'enregistrement Firebase (import) : " + err.message, true);
+      });
+    }
+  }
+
+  function upsertLocalZone(key, record){
+    let zone = zones.find(z => z.key === key);
+    if (!zone) {
+      const layer = L.polygon(record.polygon);
+      drawnItems.addLayer(layer);
+      zone = { id: idCounter++, key, layer };
+      zone.layer.on("click", () => selectZoneCard(zone.id));
+      zones.push(zone);
+    }
+    Object.assign(zone, record);
+    styleZoneLayer(zone);
+    bindZonePopup(zone);
+    return zone;
+  }
+
+  function syncZonesFromFirebase(data){
+    const seen = new Set(Object.keys(data || {}));
+    Object.entries(data || {}).forEach(([key, record]) => upsertLocalZone(key, record));
+    zones = zones.filter((z) => {
+      if (z.key && !seen.has(z.key) && data !== null) {
+        drawnItems.removeLayer(z.layer);
+        return false;
+      }
+      return true;
+    });
+    renderZoneList();
+  }
+
+  // ============================================================
+  // Liste des secteurs
+  // ============================================================
+  function iconEdit(){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path></svg>`; }
+  function iconTrash(){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg>`; }
+  function iconTarget(){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></svg>`; }
+
+  function renderZoneList(){
+    zoneCount.textContent = `(${zones.length})`;
+    zoneList.innerHTML = "";
+
+    if (zones.length === 0) { zoneList.appendChild(zoneEmptyMsg); return; }
+
+    zones.slice().sort((a, b) => a.callsign.localeCompare(b.callsign)).forEach((zone) => {
+      const color = TYPE_COLORS[zone.type] || "#8393a8";
+      const badge = zone.source === "vatspy" ? '<span class="badge badge-official">VATSIM</span>'
+        : zone.source === "openaip" ? '<span class="badge badge-openaip">OPENAIP</span>' : "";
+      const card = document.createElement("div");
+      card.className = "zone-card";
+      card.dataset.id = zone.id;
+      card.innerHTML = `
+        <div class="zone-card-top">
+          <div class="zone-callsign">
+            <span class="dot" style="background:${color}"></span>${zone.callsign} ${badge}
+          </div>
+          <div class="zone-actions">
+            <button class="icon-btn" data-action="focus" title="Centrer la carte">${iconTarget()}</button>
+            <button class="icon-btn" data-action="edit" title="Modifier">${iconEdit()}</button>
+            <button class="icon-btn danger" data-action="delete" title="Supprimer">${iconTrash()}</button>
+          </div>
+        </div>
+        <div class="zone-meta">
+          <span><b>Rating</b> ${zone.rating}</span>
+          <span><b>Freq</b> ${zone.frequency || "—"}</span>
+        </div>`;
+      zoneList.appendChild(card);
+
+      card.querySelector('[data-action="focus"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        map.fitBounds(zone.layer.getBounds(), { padding: [40, 40] });
+        zone.layer.openPopup();
+      });
+      card.querySelector('[data-action="edit"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        editingId = zone.id;
+        pendingLayer = zone.layer;
+        openForm(zone);
+      });
+      card.querySelector('[data-action="delete"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteZone(zone.id);
+      });
+    });
+  }
+
+  function selectZoneCard(id){
+    document.querySelectorAll(".zone-card").forEach(c => c.classList.remove("highlight"));
+    const card = zoneList.querySelector(`[data-id="${id}"]`);
+    if (card) card.classList.add("highlight");
+  }
+
+  function deleteZone(id){
+    const zone = zones.find(z => z.id === id);
+    if (!zone) return;
+    drawnItems.removeLayer(zone.layer);
+    zones = zones.filter(z => z.id !== id);
+    renderZoneList();
+    removeZoneKeyFromFirebase(zone.key);
+    showToast(`Secteur ${zone.callsign} supprimé.`);
+  }
+
+  // ============================================================
+  // Import des zones officielles — FIR / CTR / NAT (VATSIM)
+  // ============================================================
+  $("import-vatspy-btn").addEventListener("click", async () => {
+    showToast("Récupération des limites FIR/CTR (VATSIM)...");
+    try {
+      if (!vatspyCache) {
+        const res = await fetch(VATSPY_BOUNDARIES_URL);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        vatspyCache = await res.json();
+      }
+      const bounds = map.getBounds();
+      const updates = {};
+      let count = 0;
+      vatspyCache.features.forEach((f) => {
+        const id = f.properties && f.properties.id;
+        if (!id) return;
+        const ring = extractOuterRing(f.geometry);
+        if (!ring || !ring.length) return;
+        let featBounds;
+        try { featBounds = L.latLngBounds(ring); } catch (e) { return; }
+        if (!bounds.intersects(featBounds)) return;
+        const callsign = id.toUpperCase().replace(/-/g, "_") + "_CTR";
+        updates[callsign] = {
+          callsign, type: "CTR", rating: "ACC", frequency: "",
+          source: "vatspy", polygon: ring
+        };
+        count++;
+      });
+      if (count === 0) { showToast("Aucun FIR/CTR dans la vue actuelle — zoomez/déplacez la carte.", true); return; }
+      bulkCommit(updates);
+      showToast(`${count} FIR/CTR/NAT importé(s) depuis VATSIM.`);
+    } catch (err) {
+      showToast("Erreur import FIR/CTR : " + err.message, true);
+    }
+  });
+
+  // ============================================================
+  // Import des zones officielles — TMA / CTR aérodrome (OpenAIP)
+  // Rappel de correspondance : TMA (aviation) → notre type APP (approche)
+  //                            CTR aérodrome (aviation) → notre type TWR (tour)
+  // Données sous licence OpenAIP CC BY-NC 4.0 : usage non commercial.
+  // ============================================================
+  $("import-openaip-btn").addEventListener("click", async () => {
+    if (!window.OPENAIP_API_KEY) {
+      showToast("Clé OpenAIP manquante : complétez firebase-config.js.", true);
+      return;
+    }
+    const b = map.getBounds();
+    const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+    showToast("Récupération des TMA / CTR aérodrome (OpenAIP)...");
+    try {
+      const url = `${OPENAIP_BASE}/airspaces?bbox=${bbox}&limit=200&apiKey=${window.OPENAIP_API_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} — vérifiez les paramètres sur docs.openaip.net`);
+      const data = await res.json();
+      const items = data.items || data.docs || (Array.isArray(data) ? data : []);
+      const updates = {};
+      let count = 0;
+      items.forEach((item) => {
+        const name = (item.name || "").toUpperCase();
+        let type = null;
+        if (/\bTMA\b/.test(name)) type = "APP";
+        else if (/\bCTR\b/.test(name)) type = "TWR";
+        if (!type) return;
+        const ring = extractOuterRing(item.geometry);
+        if (!ring || !ring.length) return;
+        const callsign = `${slugify(name, 12)}_${type}`;
+        updates[callsign] = {
+          callsign, type, rating: type === "APP" ? "APC" : "ADC", frequency: "",
+          source: "openaip", polygon: ring
+        };
+        count++;
+      });
+      if (count === 0) { showToast("Aucune TMA/CTR reconnue dans la vue actuelle.", true); return; }
+      bulkCommit(updates);
+      showToast(`${count} zone(s) importée(s) depuis OpenAIP.`);
+    } catch (err) {
+      showToast("Erreur import OpenAIP : " + err.message, true);
+    }
+  });
+
+  // ============================================================
+  // Points RNAV (OpenAIP navaids / designated points)
+  // ============================================================
+  $("waypoints-toggle").addEventListener("change", (e) => {
+    waypointsEnabled = e.target.checked;
+    if (waypointsEnabled) {
+      if (!window.OPENAIP_API_KEY) {
+        showToast("Clé OpenAIP manquante : complétez firebase-config.js.", true);
+        e.target.checked = false;
+        waypointsEnabled = false;
+        return;
+      }
+      map.addLayer(waypointsLayer);
+      refreshWaypoints();
+    } else {
+      map.removeLayer(waypointsLayer);
+    }
+  });
+
+  map.on("moveend", () => {
+    if (!waypointsEnabled) return;
+    clearTimeout(waypointsTimer);
+    waypointsTimer = setTimeout(refreshWaypoints, 600);
+  });
+
+  async function refreshWaypoints(){
+    const b = map.getBounds();
+    const bbox = `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`;
+    try {
+      const url = `${OPENAIP_BASE}/navaids?bbox=${bbox}&limit=300&apiKey=${window.OPENAIP_API_KEY}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const items = data.items || data.docs || (Array.isArray(data) ? data : []);
+      waypointsLayer.clearLayers();
+      items.forEach((item) => {
+        let lat, lng;
+        if (item.geometry && Array.isArray(item.geometry.coordinates)) {
+          lng = item.geometry.coordinates[0]; lat = item.geometry.coordinates[1];
+        } else if (typeof item.lat === "number") {
+          lat = item.lat; lng = item.lon;
+        }
+        if (typeof lat !== "number" || typeof lng !== "number") return;
+        const name = item.identifier || item.name || "?";
+        const icon = L.divIcon({
+          className: "", html: `<div class="wpt-marker"><div class="wpt-diamond"></div><div class="wpt-label">${name}</div></div>`,
+          iconSize: [1, 1]
+        });
+        L.marker([lat, lng], { icon, interactive: false }).addTo(waypointsLayer);
+      });
+    } catch (err) {
+      showToast("Erreur points RNAV : " + err.message, true);
+    }
+  }
+
+  // ============================================================
+  // Export / Import manuel (sauvegarde locale de secours)
+  // ============================================================
+  $("export-btn").addEventListener("click", () => {
+    if (zones.length === 0) { showToast("Aucun secteur à exporter.", true); return; }
+    const geojson = {
+      type: "FeatureCollection",
+      features: zones.map(z => ({
+        type: "Feature",
+        properties: { callsign: z.callsign, type: z.type, rating: z.rating, frequency: z.frequency, source: z.source },
+        geometry: {
+          type: "Polygon",
+          coordinates: [ z.layer.getLatLngs()[0].map(ll => [ll.lng, ll.lat]).concat(
+            [[z.layer.getLatLngs()[0][0].lng, z.layer.getLatLngs()[0][0].lat]]
+          ) ]
+        }
+      }))
+    };
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `secteurs_atc_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`${zones.length} secteur(s) exporté(s).`);
+  });
+
+  $("import-btn").addEventListener("click", () => $("import-input").click());
+
+  $("import-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { importGeoJSON(JSON.parse(reader.result)); }
+      catch (err) { showToast("Fichier invalide : " + err.message, true); }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  function importGeoJSON(geojson){
+    if (!geojson || !Array.isArray(geojson.features)) {
+      showToast("Format inattendu : une FeatureCollection GeoJSON est requise.", true);
+      return;
+    }
+    const updates = {};
+    let count = 0;
+    geojson.features.forEach((f) => {
+      try {
+        const props = f.properties || {};
+        const callsign = (props.callsign || "").toUpperCase();
+        if (!isValidCallsign(callsign)) return;
+        const ring = extractOuterRing(f.geometry);
+        if (!ring) return;
+        updates[callsign] = {
+          callsign, type: getType(callsign), rating: props.rating || "OBS",
+          frequency: props.frequency || "", source: props.source || "custom", polygon: ring
+        };
+        count++;
+      } catch (err) { /* entité invalide ignorée */ }
+    });
+    if (count === 0) { showToast("Aucun secteur valide dans ce fichier.", true); return; }
+    bulkCommit(updates);
+    if (zones.length) map.fitBounds(drawnItems.getBounds(), { padding: [40, 40] });
+    showToast(`${count} secteur(s) importé(s).`);
+  }
+
+  // ============================================================
+  // Horloge UTC
+  // ============================================================
+  function tickClock(){
+    const now = new Date();
+    const hh = String(now.getUTCHours()).padStart(2, "0");
+    const mm = String(now.getUTCMinutes()).padStart(2, "0");
+    const ss = String(now.getUTCSeconds()).padStart(2, "0");
+    $("clock").innerHTML = `${hh}:${mm}:${ss}<small>UTC</small>`;
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  renderZoneList();
+  initFirebase();
+})();
+</script>
+</body>
+</html>

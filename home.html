@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mes Serveurs</title>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Press Start 2P', cursive;
+    }
+
+    body {
+      background-color: #111;
+      color: #fff;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+      width: 250px;
+      background-color: #1b1b1b;
+      padding: 2rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+      border-right: 2px solid #444;
+    }
+
+    .sidebar a {
+      color: white;
+      text-decoration: none;
+      font-size: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: color 0.3s;
+    }
+
+    .sidebar a:hover {
+      color: #00ff90;
+    }
+
+    /* MAIN CONTENT */
+    .main {
+      flex: 1;
+      padding: 2rem;
+      position: relative;
+      overflow-y: auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 2rem;
+      font-size: 1.2rem;
+    }
+
+    #openPopup {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background-color: #28a745;
+      border: none;
+      color: #fff;
+      font-size: 1.5rem;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: background-color 0.3s;
+    }
+
+    #openPopup:hover {
+      background-color: #218838;
+    }
+
+    #domainList {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-top: 2rem;
+      max-height: 60vh;
+      overflow-y: auto;
+      padding-right: 0.5rem;
+    }
+
+    .server-card {
+      background-color: #222;
+      border: 2px solid #444;
+      padding: 1rem;
+      border-radius: 10px;
+      transition: transform 0.2s ease;
+    }
+
+    .server-card:hover {
+      transform: scale(1.02);
+    }
+
+    #noServerText {
+      text-align: center;
+      margin-top: 3rem;
+      color: #999;
+      font-size: 0.8rem;
+    }
+
+    /* POPUP */
+    #popup {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s ease;
+      z-index: 999;
+    }
+
+    #popup.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .popup-content {
+      background-color: #1c1c1c;
+      border: 2px solid #666;
+      padding: 2rem;
+      border-radius: 15px;
+      min-width: 300px;
+      max-width: 90%;
+      position: relative;
+    }
+
+    .popup-content h2 {
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .popup-content input,
+    .popup-content button {
+      display: block;
+      width: 100%;
+      margin-top: 1rem;
+      padding: 0.8rem;
+      font-size: 0.6rem;
+      background-color: #333;
+      color: #fff;
+      border: 2px solid #555;
+      border-radius: 8px;
+    }
+
+    .popup-content button {
+      background-color: #007bff;
+      border-color: #0056b3;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .popup-content button:hover {
+      background-color: #0056b3;
+    }
+
+    .close {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      font-size: 1.2rem;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .progress-container {
+      width: 100%;
+      background-color: #333;
+      height: 20px;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 1rem;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: #28a745;
+      width: 0%;
+      transition: width 0.5s ease;
+    }
+
+    @media screen and (max-width: 768px) {
+      .sidebar {
+        width: 100px;
+        padding: 1rem 0.5rem;
+      }
+
+      .sidebar a {
+        font-size: 0.5rem;
+        flex-direction: column;
+        gap: 0;
+        text-align: center;
+      }
+
+      .main {
+        padding: 1rem;
+      }
+
+      #openPopup {
+        font-size: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="#"><span>🏠</span> Home</a>
+    <a href="admin.html"><span>🛠️</span> Admin</a>
+    <a href="forum.html"><span>💬</span> Forum<br>(Bientôt)</a>
+    <a href="help.html"><span>❓</span> Centre d'aide</a>
+  </nav>
+
+  <div class="main">
+    <h1>MES SERVEURS</h1>
+
+    <button id="openPopup" style="
+  font-family: 'Press Start 2P', monospace;
+  background-color: #00ff99;
+  color: black;
+  font-size: 14px;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+">
+  +
+</button>
+
+
+    <div id="domainList">
+      <!-- Cartes serveurs ici -->
+    </div>
+
+    <p id="noServerText">Aucun serveur pour le moment.</p>
+  </div>
+
+<div id="popup" class="popup-overlay">
+  <div class="popup-box">
+    <h2 style="font-family: 'Press Start 2P', monospace;">Nouveau sous-domaine</h2>
+    <label>Nom :</label>
+    <input type="text" id="subdomain" placeholder="ex: kykygosed">
+    
+    <label>Type :</label>
+    <select id="type">
+      <option value="web">Web</option>
+      <option value="minecraft">Minecraft</option>
+    </select>
+    
+    <label>Domaine :</label>
+    <select id="domain">
+      <option>.min3.online</option>
+      <option>.min3.cloud</option>
+      <option>.min3.site</option>
+      <option>.playcraft.cloud</option>
+      <option>.craftserv.cloud</option>
+    </select>
+    
+    <label>IP :</label>
+    <input type="text" id="ip" placeholder="ex: 123.45.67.89">
+    
+    <label>Port :</label>
+    <input type="text" id="port" placeholder="ex: 25565">
+    
+    <button id="createBtn">Créer</button>
+    <button id="cancelBtn">Annuler</button>
+  </div>
+</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+
+const supabaseUrl = 'https://vrdkbpyyavkcwpqshwyj.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyZGticHl5YXZrY3dwcXNod3lqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIwNjU4ODUsImV4cCI6MjA2NzY0MTg4NX0.ktTFRPbZUWxpGxx8g0EyqTPqgVfOyU3MYd70euwiTxY';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+let currentUser = null;
+
+const checkMaintenance = async () => {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const session = sessionData.session;
+  if (!session) return;
+  const userId = session.user.id;
+  const { data: userData, error } = await supabase.from('users').select('admin').eq('id', userId).single();
+  if (error) return;
+  if (!userData?.admin) {
+    const { data: settings } = await supabase.from('settings').select('maintenance').single();
+    if (settings?.maintenance) {
+      window.location.href = "maintenance.html";
+    }
+  }
+};
+
+checkMaintenance();
+setInterval(checkMaintenance, 5000);
+window.addEventListener("focus", checkMaintenance);
+window.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkMaintenance();
+});
+
+(async () => {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    console.log("Connecté en tant que :", currentUser);
+    listenToSubdomains();
+  } else {
+    console.log("Pas connecté");
+    window.location.href = '/index.html';
+  }
+})();
+
+const popupContent = document.getElementById('popupContent');
+const domainList = document.getElementById('domainList');
+const noServerText = document.getElementById('noServerText');
+const progressFill = document.getElementById('progressFill');
+const popup = document.getElementById('popup');
+const openBtn = document.getElementById('openPopup');
+
+let subdomain = '', type = '', domain = '', ip = '', port = '';
+let step = 0;
+
+function closePopup() {
+  popup.classList.remove('show');
+  step = 0;
+  renderStep();
+}
+
+openBtn.addEventListener('click', () => {
+  if (!currentUser) {
+    alert("Vous devez être connecté.");
+    return;
+  }
+  popup.classList.add('show');
+  step = 0;
+  renderStep();
+});
+
+function nextStep() {
+  if (step === 0) {
+    const input = document.getElementById('subdomainInput');
+    const select = document.getElementById('typeSelect');
+    if (!input || !select) return;
+    subdomain = input.value.trim();
+    type = select.value;
+    if (!subdomain) return;
+  } else if (step === 1) {
+    const select = document.getElementById('domainSelect');
+    if (!select) return;
+    domain = select.value;
+  } else if (step === 2) {
+    const input = document.getElementById('ipInput');
+    if (!input) return;
+    ip = input.value.trim();
+    if (!ip) return;
+  } else if (step === 3) {
+    const input = document.getElementById('portInput');
+    if (!input) return;
+    port = input.value.trim();
+    if (!port) return;
+    validateDomain();
+    return;
+  }
+  step++;
+  renderStep();
+}
+
+function renderStep() {
+  if (step === 0) {
+    popupContent.innerHTML = `
+      <label>Nom de sous-domaine :</label>
+      <input type="text" id="subdomainInput" placeholder="ex: kykygosed" value="${subdomain}">
+      <label>Type :</label>
+      <select id="typeSelect">
+        <option value="web" ${type === 'web' ? 'selected' : ''}>Web</option>
+        <option value="minecraft" ${type === 'minecraft' ? 'selected' : ''}>Minecraft</option>
+      </select>
+      <div class="popup-buttons">
+        <button id="cancelBtn">Annuler</button>
+        <button id="nextBtn">Suivant</button>
+      </div>
+    `;
+  } else if (step === 1) {
+    popupContent.innerHTML = `
+      <label>Domaine :</label>
+      <select id="domainSelect">
+        <option>.min3.online</option>
+        <option>.min3.cloud</option>
+        <option>.min3.site</option>
+        <option>.playcraft.cloud</option>
+        <option>.craftserv.cloud</option>
+      </select>
+      <div class="popup-buttons">
+        <button id="cancelBtn">Annuler</button>
+        <button id="nextBtn">Suivant</button>
+      </div>
+    `;
+  } else if (step === 2) {
+    popupContent.innerHTML = `
+      <label>Adresse IP :</label>
+      <input type="text" id="ipInput" placeholder="ex: 123.456.789.1" value="${ip}">
+      <div class="popup-buttons">
+        <button id="cancelBtn">Annuler</button>
+        <button id="nextBtn">Suivant</button>
+      </div>
+    `;
+  } else if (step === 3) {
+    popupContent.innerHTML = `
+      <label>Port :</label>
+      <input type="text" id="portInput" placeholder="ex: 25565" value="${port}">
+      <div class="popup-buttons">
+        <button id="cancelBtn">Annuler</button>
+        <button id="nextBtn">Valider</button>
+      </div>
+    `;
+  }
+  setTimeout(() => {
+    document.getElementById('nextBtn')?.addEventListener('click', nextStep);
+    document.getElementById('cancelBtn')?.addEventListener('click', closePopup);
+  }, 0);
+  progressFill.style.width = `${(step / 4) * 100}%`;
+}
+
+async function validateDomain() {
+  progressFill.style.width = `25%`;
+  popupContent.innerHTML = `<p>Vérification de votre compte...</p>`;
+  setTimeout(async () => {
+    popupContent.innerHTML = `<p>Vérification de la disponibilité...</p>`;
+    progressFill.style.width = `60%`;
+    const { data: subdomains, error } = await supabase.from('subdomains').select('*').eq('user_id', currentUser.id);
+    if (subdomains?.length >= 3) {
+      popupContent.innerHTML = `<p>Limite atteinte : vous ne pouvez pas créer plus de 3 sous-domaines.</p><button id="closeBtn">Fermer</button>`;
+      progressFill.style.width = `100%`;
+      document.getElementById('closeBtn')?.addEventListener('click', closePopup);
+      return;
+    }
+    const { error: insertError } = await supabase.from('subdomains').insert([{
+      user_id: currentUser.id,
+      name: subdomain,
+      type,
+      domain,
+      ip,
+      port,
+      created_at: new Date().toISOString()
+    }]);
+    if (insertError) {
+      popupContent.innerHTML = `<p>Erreur lors de l'insertion : ${insertError.message}</p><button id="closeBtn">Fermer</button>`;
+      document.getElementById('closeBtn')?.addEventListener('click', closePopup);
+      return;
+    }
+    setTimeout(() => {
+      popupContent.innerHTML = `
+        <p>Félicitations, vous avez créé un sous-domaine!</p>
+        <p style="color:gray">Vous devrez sûrement attendre un peu pour qu'il soit utilisable.</p>
+        <button id="closeBtn">Fermer</button>
+      `;
+      progressFill.style.width = `100%`;
+      document.getElementById('closeBtn')?.addEventListener('click', closePopup);
+      listenToSubdomains();
+    }, 1000);
+  }, 1500);
+}
+
+async function listenToSubdomains() {
+  const { data: subs, error } = await supabase.from('subdomains').select('*').eq('user_id', currentUser.id);
+  domainList.innerHTML = '';
+  if (!subs || subs.length === 0) {
+    noServerText.innerHTML = `
+      <div style="text-align: center; padding: 20px;">
+        <p style="font-family: 'Press Start 2P', sans-serif; font-size: 12px;">
+          Tiens ! On dirait que vous n'avez pas de sous-domaines !<br>Crée-en un pour commencer !
+        </p>
+        <img src="https://imgur.com/AXIN0Xg.jpeg" alt="No subdomains" style="width: 180px; margin-top: 15px;">
+      </div>
+    `;
+    noServerText.style.display = 'block';
+  } else {
+    noServerText.style.display = 'none';
+    subs.forEach(data => {
+      const item = document.createElement('div');
+      item.className = 'domain-item';
+      item.innerHTML = `<span>${data.name}${data.domain}</span><span>${data.ip}:${data.port}</span>`;
+      domainList.appendChild(item);
+    });
+  }
+}
+
+</script>
+
+</body>
+</html>
