@@ -627,6 +627,7 @@ window.addEventListener("beforeunload", () => {
    7. Carte PVD (Leaflet) + secteurs + anneaux de distance
 --------------------------------------------------------------------------- */
 let map, sectorLayer, ringLayer, waypointsLayer, reportingPointsLayer, airspacesLayer, procFixesLayer, aircraftLayer, vertexLabelLayer, vectorLayer, rwyPvdLayer;
+let currentVoicePresence = {}; // dernier snapshot voice_presence/<freq> reçu, tous callsigns confondus (ATC ET pilotes VHF-only) — déclaré tôt car renderVhfUsers() l'utilise dès le chargement du script
 function initMap(){
   map = L.map("pvd-map", { zoomControl: true, worldCopyJump: true })
     .setView([state.station.lat, state.station.lon], state.stationSet ? 9 : 6);
@@ -1403,7 +1404,6 @@ function closeVoicePeer(cs){
   renderVhfUsers();
 }
 
-let currentVoicePresence = {}; // dernier snapshot voice_presence/<freq> reçu, tous callsigns confondus (ATC ET pilotes VHF-only)
 async function handleVoicePresence(freq, presenceObj){
   currentVoicePresence = presenceObj || {};
   renderVhfUsers();
