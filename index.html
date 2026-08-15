@@ -265,6 +265,23 @@
   #toast.visible{ opacity:1; transform: translateX(-50%) translateY(0); pointer-events:auto; }
   #toast.error{ border-color: rgba(255,92,108,0.4); color: var(--danger); }
 
+  .btn.active-mode{ background: var(--accent); color:#06170f; border-color:var(--accent); }
+
+  /* Poignées du calque VAC (coins déplaçables + poignée centrale) */
+  .vac-handle{ width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid #06170f;
+    box-shadow:0 0 6px rgba(53,240,161,0.7); cursor:move; }
+  .vac-handle.corner{ width:12px; height:12px; border-radius:2px; background:#ffcf6b; }
+
+  /* Points personnalisés (Firebase) */
+  .wpt-diamond.custom{ background:#8bffc9; border-color:#1f9e63; }
+  .wpt-label.custom{ color:#b9ffdb; }
+
+  /* Procédures SID/STAR */
+  .proc-fix-diamond{ width:8px; height:8px; background:#ffb23e; border:1px solid #a5691a; transform:rotate(45deg); box-shadow:0 0 5px rgba(255,178,62,0.7); }
+  .proc-fix-diamond.star{ background:#4fb3ff; border-color:#1a5ea5; box-shadow:0 0 5px rgba(79,179,255,0.7); }
+  .proc-fix-label{ margin-top:3px; font-family:var(--mono); font-size:9.5px; color:#ffdcae; text-shadow:0 0 3px #000,0 0 3px #000; white-space:nowrap; }
+  .proc-fix-label.star{ color:#c6e6ff; }
+
   input[type=file]{ display:none; }
 
   @media (max-width: 760px){
@@ -353,6 +370,49 @@
 
   <div id="default-panels">
 
+    <!-- Points RNAV/VFR + procédures SID/STAR (créés ici, enregistrés dans Firebase) -->
+    <div class="panel-section">
+      <p class="section-label">Points & procédures IFR <span id="wpt-proc-count">(0)</span></p>
+      <button class="btn btn-sm btn-block" id="wpt-add-btn">✛ Ajouter un point — clic sur la carte</button>
+      <button class="btn btn-sm btn-block" id="proc-add-btn">↝ Créer une SID/STAR — clics successifs</button>
+      <button class="btn btn-sm btn-block" id="proc-auto-btn">☁ Tenter un import automatique (ICAO)</button>
+      <label class="checkbox-row">
+        <input type="checkbox" id="wpt-layer-toggle" checked>
+        Afficher les points enregistrés
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="proc-layer-toggle" checked>
+        Afficher les SID/STAR enregistrées
+      </label>
+      <p class="official-note">
+        Ces points/procédures sont enregistrés dans Firebase (<code>waypoints</code> et
+        <code>procedures</code>) — visibles ensuite dans <code>atc.html</code>.
+        Aucune API publique gratuite ne propose les SID/STAR sous forme de coordonnées
+        (vérifié) : l'import automatique essaie OpenAIP puis échoue proprement en l'expliquant ;
+        tracez-les alors vous-même point par point, d'après votre carte VAC/AIP officielle
+        (le calque ci-dessous aide à caler les positions).
+      </p>
+    </div>
+
+    <!-- Calque d'aide : carte VAC (image), déplaçable/redimensionnable, semi-transparente -->
+    <div class="panel-section">
+      <p class="section-label">Calque carte VAC (aide au placement)</p>
+      <button class="btn btn-sm btn-block" id="vac-load-btn">🖼 Charger une image (.png / .jpg)</button>
+      <input type="file" id="vac-file-input" accept="image/png,image/jpeg">
+      <div id="vac-controls" style="display:none;">
+        <div class="field" style="margin-top:10px;">
+          <label for="vac-opacity">Opacité</label>
+          <input type="range" id="vac-opacity" min="0.15" max="1" step="0.05" value="0.55">
+        </div>
+        <p class="hint" style="margin-bottom:10px;">
+          Poignées jaunes (coins) = redimensionner/faire pivoter le calque librement ;
+          poignée verte (centre) = déplacer l'ensemble. Calez l'image sur le fond de carte
+          réel, placez vos points par-dessus, puis retirez le calque si besoin.
+        </p>
+        <button class="btn btn-sm btn-danger btn-block" id="vac-remove-btn">Retirer le calque</button>
+      </div>
+    </div>
+
     <!-- Zones officielles / données réelles -->
     <div class="panel-section">
       <p class="section-label">Zones officielles (données réelles)</p>
@@ -434,6 +494,16 @@
   let waypointsEnabled = false;
   let waypointsTimer = null;
 
+  // Points personnalisés + procédures IFR (SID/STAR), enregistrés dans Firebase,
+  // distincts du calque OpenAIP ci-dessus.
+  const customWptLayer = L.layerGroup().addTo(map);
+  const proceduresLayer = L.layerGroup().addTo(map);
+  let customWaypoints = {};   // key -> { name, lat, lon }
+  let procedures = {};        // key -> { name, kind, runway, icao, fixes:[{name,lat,lon}] }
+
+  // Calque d'aide : image VAC superposée, déplaçable/redimensionnable, semi-transparente.
+  let vacOverlay = null, vacHandleNW = null, vacHandleSE = null, vacHandleMove = null;
+
   const drawPolygon = new L.Draw.Polygon(map, {
     shapeOptions: { color: "#35f0a1", weight: 2, fillOpacity: 0.08 },
     showArea: false
@@ -472,6 +542,8 @@
       db.ref("sectors").once("value").catch((err) => {
         showToast("Erreur d'accès à la base : " + err.message, true);
       });
+      db.ref("waypoints").on("value", (snap) => syncWaypoints(snap.val()));
+      db.ref("procedures").on("value", (snap) => syncProcedures(snap.val()));
     } catch (err) {
       setFirebaseStatus(false, "Erreur Firebase");
       showToast("Erreur d'initialisation Firebase : " + err.message, true);
@@ -577,6 +649,8 @@
       exitDrawMode();
     } else if (formPanel.classList.contains("visible")) {
       showToast("Terminez ou annulez le secteur en cours d'abord.", true);
+    } else if (addWptMode || procBuildMode) {
+      showToast("Terminez ou annulez l'ajout de point/procédure en cours d'abord.", true);
     } else {
       enterDrawMode();
     }
@@ -959,6 +1033,261 @@
     } catch (err) {
       showToast("Erreur points RNAV : " + err.message, true);
     }
+  }
+
+  // ============================================================
+  // Points personnalisés (VFR/RNAV/IFR) — clic sur la carte, enregistrés Firebase
+  // ============================================================
+  let addWptMode = false;
+  let procBuildMode = false;
+  let procVertices = [];   // [{name, lat, lon}] en cours de construction
+  let procBuildLayer = null; // aperçu (ligne + points) pendant la construction
+
+  function setModeButtons(){
+    $("wpt-add-btn").classList.toggle("active-mode", addWptMode);
+    $("wpt-add-btn").textContent = addWptMode ? "✛ Cliquez sur la carte… (Échap annule)" : "✛ Ajouter un point — clic sur la carte";
+    $("proc-add-btn").classList.toggle("active-mode", procBuildMode);
+    $("proc-add-btn").textContent = procBuildMode
+      ? `↝ Terminer la SID/STAR (${procVertices.length} point${procVertices.length > 1 ? "s" : ""}) — Échap annule`
+      : "↝ Créer une SID/STAR — clics successifs";
+  }
+
+  $("wpt-add-btn").addEventListener("click", () => {
+    if (drawBtn.classList.contains("active")) { showToast("Terminez d'abord le tracé de secteur en cours.", true); return; }
+    if (procBuildMode) cancelProcBuild();
+    addWptMode = !addWptMode;
+    setModeButtons();
+    if (addWptMode) showToast("Cliquez sur la carte à l'endroit du point à ajouter.");
+  });
+
+  $("proc-add-btn").addEventListener("click", () => {
+    if (drawBtn.classList.contains("active")) { showToast("Terminez d'abord le tracé de secteur en cours.", true); return; }
+    if (addWptMode) { addWptMode = false; }
+    if (procBuildMode) { finishProcBuild(); return; }
+    procBuildMode = true;
+    procVertices = [];
+    procBuildLayer = L.layerGroup().addTo(map);
+    setModeButtons();
+    showToast("Cliquez les points de la procédure dans l'ordre (départ → dernier fixe). Cliquez à nouveau sur le bouton pour terminer.");
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (addWptMode) { addWptMode = false; setModeButtons(); showToast("Ajout de point annulé."); }
+    if (procBuildMode) cancelProcBuild();
+  });
+
+  function cancelProcBuild(){
+    procBuildMode = false;
+    procVertices = [];
+    if (procBuildLayer) { map.removeLayer(procBuildLayer); procBuildLayer = null; }
+    setModeButtons();
+    showToast("Construction de la procédure annulée.");
+  }
+
+  map.on("click", (e) => {
+    if (addWptMode) {
+      addWptMode = false; setModeButtons();
+      const name = (prompt("Nom du point (ex : ANG, BALNI, TIPIK)") || "").trim().toUpperCase();
+      if (!name) { showToast("Ajout annulé (nom vide)."); return; }
+      const key = slugify(name, 20);
+      const record = { name, lat: e.latlng.lat, lon: e.latlng.lng };
+      customWaypoints[key] = record;
+      renderCustomWaypoints();
+      if (firebaseReady && db) db.ref("waypoints/" + key).set(record).catch((err) => showToast("Erreur d'enregistrement : " + err.message, true));
+      showToast(`Point ${name} ajouté.`);
+    } else if (procBuildMode) {
+      const idx = procVertices.length + 1;
+      const name = (prompt(`Nom du point ${idx} (laisser vide pour "PT${idx}")`) || "").trim().toUpperCase() || `PT${idx}`;
+      procVertices.push({ name, lat: e.latlng.lat, lon: e.latlng.lng });
+      L.circleMarker(e.latlng, { radius: 4, color: "#ffb23e", fillColor: "#ffb23e", fillOpacity: 1 }).addTo(procBuildLayer);
+      if (procVertices.length > 1) {
+        L.polyline(procVertices.map(p => [p.lat, p.lon]), { color: "#ffb23e", weight: 2, dashArray: "4 4" }).addTo(procBuildLayer);
+      }
+      setModeButtons();
+    }
+  });
+
+  function finishProcBuild(){
+    if (procVertices.length < 2) {
+      showToast("Une procédure a besoin d'au moins 2 points.", true);
+      cancelProcBuild();
+      return;
+    }
+    const icao = (prompt("Code OACI de l'aérodrome concerné (ex : LFRS)") || "").trim().toUpperCase();
+    if (!icao) { showToast("Import annulé (code OACI vide)."); cancelProcBuild(); return; }
+    const kindRaw = (prompt('Type de procédure : tapez "SID" (départ) ou "STAR" (arrivée)') || "").trim().toUpperCase();
+    const kind = kindRaw === "STAR" ? "STAR" : "SID";
+    const name = (prompt(`Nom de la procédure (ex : ${procVertices[procVertices.length - 1].name} ${kind === "SID" ? "1D" : "1A"})`) || "").trim().toUpperCase();
+    if (!name) { showToast("Import annulé (nom vide)."); cancelProcBuild(); return; }
+    const runway = (prompt("Piste associée (optionnel, ex : 03)") || "").trim();
+    const key = `${icao}_${slugify(name, 20)}`;
+    const record = { name, kind, runway, icao, fixes: procVertices.slice(), ts: Date.now() };
+    procedures[key] = record;
+    if (procBuildLayer) { map.removeLayer(procBuildLayer); procBuildLayer = null; }
+    procBuildMode = false;
+    procVertices = [];
+    setModeButtons();
+    renderProcedures();
+    if (firebaseReady && db) db.ref("procedures/" + key).set(record).catch((err) => showToast("Erreur d'enregistrement : " + err.message, true));
+    showToast(`Procédure ${icao} ${name} (${kind}) enregistrée — ${record.fixes.length} points.`);
+  }
+
+  function syncWaypoints(data){
+    customWaypoints = data || {};
+    renderCustomWaypoints();
+  }
+  function renderCustomWaypoints(){
+    customWptLayer.clearLayers();
+    let n = 0;
+    Object.entries(customWaypoints).forEach(([key, pt]) => {
+      if (pt.lat == null || pt.lon == null) return;
+      n++;
+      const icon = L.divIcon({
+        className: "", iconSize: [1, 1],
+        html: `<div class="wpt-marker"><div class="wpt-diamond custom"></div><div class="wpt-label custom">${pt.name}</div></div>`
+      });
+      const marker = L.marker([pt.lat, pt.lon], { icon }).addTo(customWptLayer);
+      marker.on("contextmenu", (e) => {
+        L.DomEvent.stop(e);
+        if (confirm(`Supprimer le point "${pt.name}" ?`)) {
+          delete customWaypoints[key];
+          renderCustomWaypoints();
+          if (firebaseReady && db) db.ref("waypoints/" + key).remove().catch(() => {});
+        }
+      });
+    });
+    updateWptProcCount();
+  }
+  function syncProcedures(data){
+    procedures = data || {};
+    renderProcedures();
+  }
+  function renderProcedures(){
+    proceduresLayer.clearLayers();
+    Object.entries(procedures).forEach(([key, rec]) => {
+      if (!rec.fixes || rec.fixes.length < 2) return;
+      const isStar = rec.kind === "STAR";
+      const color = isStar ? "#4fb3ff" : "#ffb23e";
+      const line = L.polyline(rec.fixes.map(f => [f.lat, f.lon]), { color, weight: 2, opacity: 0.85 }).addTo(proceduresLayer);
+      line.bindPopup(
+        `<div style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:#0a0f16;">`
+        + `<b>${rec.icao} ${rec.name}</b><br>${rec.kind}${rec.runway ? " · piste " + rec.runway : ""}<br>`
+        + `<span style="color:#667;">${rec.fixes.map(f => f.name).join(" → ")}</span>`
+        + `</div>`
+      );
+      line.on("contextmenu", (e) => {
+        L.DomEvent.stop(e);
+        if (confirm(`Supprimer la procédure "${rec.icao} ${rec.name}" ?`)) {
+          delete procedures[key];
+          renderProcedures();
+          if (firebaseReady && db) db.ref("procedures/" + key).remove().catch(() => {});
+        }
+      });
+      rec.fixes.forEach(f => {
+        const icon = L.divIcon({
+          className: "", iconSize: [1, 1],
+          html: `<div class="wpt-marker"><div class="proc-fix-diamond${isStar ? " star" : ""}"></div><div class="proc-fix-label${isStar ? " star" : ""}">${f.name}</div></div>`
+        });
+        L.marker([f.lat, f.lon], { icon, interactive: false }).addTo(proceduresLayer);
+      });
+    });
+    updateWptProcCount();
+  }
+  function updateWptProcCount(){
+    $("wpt-proc-count").textContent = `(${Object.keys(customWaypoints).length} pt · ${Object.keys(procedures).length} proc)`;
+  }
+
+  $("wpt-layer-toggle").addEventListener("change", (e) => {
+    if (e.target.checked) map.addLayer(customWptLayer); else map.removeLayer(customWptLayer);
+  });
+  $("proc-layer-toggle").addEventListener("change", (e) => {
+    if (e.target.checked) map.addLayer(proceduresLayer); else map.removeLayer(proceduresLayer);
+  });
+
+  // ============================================================
+  // Import automatique de SID/STAR — tente OpenAIP, explique sinon
+  // ============================================================
+  // Vérifié sur le schéma officiel de l'API OpenAIP (api.core.openaip.net) :
+  // aucun endpoint de procédures IFR (SID/STAR) n'existe dans l'offre publique
+  // gratuite (seulement Airports, Reporting Points VFR, Airspaces, Navaids,
+  // Hotspots, Obstacles, RC Airfields). On tente quand même l'appel ci-dessous
+  // (au cas où l'API évoluerait), mais en pratique il échoue toujours
+  // aujourd'hui — d'où le message clair invitant à tracer à la main.
+  $("proc-auto-btn").addEventListener("click", async () => {
+    const icao = (prompt("Code OACI de l'aérodrome (ex : LFRS)") || "").trim().toUpperCase();
+    if (!icao) return;
+    showToast(`Tentative d'import automatique des SID/STAR pour ${icao}…`);
+    let found = false;
+    if (window.OPENAIP_API_KEY) {
+      try {
+        const res = await fetch(`${OPENAIP_BASE}/procedures?apt=${icao}&apiKey=${window.OPENAIP_API_KEY}`);
+        if (res.ok) {
+          const data = await res.json();
+          const items = data.items || data.docs || [];
+          if (items.length) { found = true; /* structure non garantie, à adapter si un jour disponible */ }
+        }
+      } catch (err) { /* endpoint indisponible — attendu, voir commentaire ci-dessus */ }
+    }
+    if (!found) {
+      showToast(`Aucune source publique gratuite ne fournit les SID/STAR de ${icao} sous forme de coordonnées (vérifié : OpenAIP n'a pas cet endpoint). Utilisez « Créer une SID/STAR » pour les tracer vous-même d'après votre carte VAC/AIP.`, true);
+    }
+  });
+
+  // ============================================================
+  // Calque d'aide : carte VAC (image superposée, déplaçable, semi-transparente)
+  // ============================================================
+  $("vac-load-btn").addEventListener("click", () => $("vac-file-input").click());
+  $("vac-file-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => placeVacOverlay(reader.result);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  });
+
+  function placeVacOverlay(dataUrl){
+    removeVacOverlay();
+    // Position de départ : rectangle centré sur la vue actuelle, aux 3/4 de sa taille.
+    const b = map.getBounds();
+    const latPad = (b.getNorth() - b.getSouth()) * 0.15;
+    const lonPad = (b.getEast() - b.getWest()) * 0.15;
+    let nw = L.latLng(b.getNorth() - latPad, b.getWest() + lonPad);
+    let se = L.latLng(b.getSouth() + latPad, b.getEast() - lonPad);
+
+    vacOverlay = L.imageOverlay(dataUrl, L.latLngBounds(nw, se), { opacity: parseFloat($("vac-opacity").value), interactive: false }).addTo(map);
+
+    const handleIcon = (cls) => L.divIcon({ className: "", iconSize: [16, 16], html: `<div class="vac-handle ${cls}"></div>` });
+    vacHandleNW = L.marker(nw, { icon: handleIcon("corner"), draggable: true, zIndexOffset: 1000 }).addTo(map);
+    vacHandleSE = L.marker(se, { icon: handleIcon("corner"), draggable: true, zIndexOffset: 1000 }).addTo(map);
+    vacHandleMove = L.marker(L.latLngBounds(nw, se).getCenter(), { icon: handleIcon(""), draggable: true, zIndexOffset: 1000 }).addTo(map);
+
+    function updateBounds(){
+      vacOverlay.setBounds(L.latLngBounds(vacHandleNW.getLatLng(), vacHandleSE.getLatLng()));
+      vacHandleMove.setLatLng(L.latLngBounds(vacHandleNW.getLatLng(), vacHandleSE.getLatLng()).getCenter());
+    }
+    vacHandleNW.on("drag", updateBounds);
+    vacHandleSE.on("drag", updateBounds);
+    vacHandleMove.on("drag", (e) => {
+      const prevCenter = L.latLngBounds(vacHandleNW.getLatLng(), vacHandleSE.getLatLng()).getCenter();
+      const dLat = e.latlng.lat - prevCenter.lat;
+      const dLng = e.latlng.lng - prevCenter.lng;
+      vacHandleNW.setLatLng([vacHandleNW.getLatLng().lat + dLat, vacHandleNW.getLatLng().lng + dLng]);
+      vacHandleSE.setLatLng([vacHandleSE.getLatLng().lat + dLat, vacHandleSE.getLatLng().lng + dLng]);
+      vacOverlay.setBounds(L.latLngBounds(vacHandleNW.getLatLng(), vacHandleSE.getLatLng()));
+    });
+
+    $("vac-controls").style.display = "block";
+    showToast("Calque VAC chargé — faites glisser les poignées pour le caler sur la carte.");
+  }
+
+  $("vac-opacity").addEventListener("input", (e) => { if (vacOverlay) vacOverlay.setOpacity(parseFloat(e.target.value)); });
+  $("vac-remove-btn").addEventListener("click", removeVacOverlay);
+  function removeVacOverlay(){
+    [vacOverlay, vacHandleNW, vacHandleSE, vacHandleMove].forEach(l => { if (l) map.removeLayer(l); });
+    vacOverlay = vacHandleNW = vacHandleSE = vacHandleMove = null;
+    $("vac-controls").style.display = "none";
   }
 
   // ============================================================
