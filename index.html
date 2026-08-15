@@ -284,6 +284,12 @@
 
   input[type=file]{ display:none; }
 
+  /* Bloque les clics sur les couches vectorielles interactives (secteurs, etc.)
+     pendant l'ajout d'un point ou la construction d'une procédure, pour que le
+     clic sur la carte atteigne bien le handler de création au lieu d'ouvrir le
+     popup de la zone qui se trouve en dessous. */
+  #map.map-drawing-mode .leaflet-interactive{ pointer-events: none !important; }
+
   @media (max-width: 760px){
     #sidebar{ left:14px; width:auto; }
     .clock{ display:none; }
@@ -1043,6 +1049,17 @@
   let procVertices = [];   // [{name, lat, lon}] en cours de construction
   let procBuildLayer = null; // aperçu (ligne + points) pendant la construction
 
+  // Bascule le blocage des clics sur les couches vectorielles interactives
+  // (secteurs dessinés, imports VATSIM/OpenAIP...) tant qu'on est en train
+  // d'ajouter un point ou de construire une procédure. Sans ça, cliquer sur
+  // la carte à un endroit recouvert par un secteur ouvrait le popup de ce
+  // secteur au lieu de déclencher la création du point (Leaflet ne fait pas
+  // remonter le clic d'une couche interactive vers l'évènement "click" de la
+  // carte). Voir la règle CSS "#map.map-drawing-mode .leaflet-interactive".
+  function syncMapInteractiveBlock(){
+    map.getContainer().classList.toggle("map-drawing-mode", addWptMode || procBuildMode);
+  }
+
   function setModeButtons(){
     $("wpt-add-btn").classList.toggle("active-mode", addWptMode);
     $("wpt-add-btn").textContent = addWptMode ? "✛ Cliquez sur la carte… (Échap annule)" : "✛ Ajouter un point — clic sur la carte";
@@ -1050,6 +1067,7 @@
     $("proc-add-btn").textContent = procBuildMode
       ? `↝ Terminer la SID/STAR (${procVertices.length} point${procVertices.length > 1 ? "s" : ""}) — Échap annule`
       : "↝ Créer une SID/STAR — clics successifs";
+    syncMapInteractiveBlock();
   }
 
   $("wpt-add-btn").addEventListener("click", () => {
