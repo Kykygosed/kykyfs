@@ -45,7 +45,10 @@ let state = {
   waypointsShown: false,       // VOR/NDB/DME (OpenAIP /navaids)
   reportingPointsShown: false, // points RNAV/VFR (OpenAIP /reporting-points)
   airspacesShown: false,
-  procFixesShown: false,       // fixes RNAV enroute / SID-STAR (table locale, PAS OpenAIP)
+  procFixesShown: false,       // fixes RNAV enroute / SID-STAR
+  fbWaypoints: {},             // waypoints/ sur Firebase — créés dans index.html (Sector Manager)
+  fbProcedures: {},            // procedures/ sur Firebase — SID/STAR créées dans index.html
+  testFlights: {},             // avions fictifs (bouton "🧪 Trafic test"), jamais envoyés à Firebase
 };
 
 function $(id){ return document.getElementById(id); }
@@ -579,7 +582,7 @@ function initFirebase(){
   }
 }
 function attachFirebaseListeners(){
-  db.ref("flights").on("value", snap => { state.flights = snap.val() || {}; renderTmChips(); renderFplPanel(); renderAircraftOnMap(); renderVhfUsers(); });
+  db.ref("flights").on("value", snap => { state.flights = { ...(snap.val() || {}), ...state.testFlights }; renderTmChips(); renderFplPanel(); renderAircraftOnMap(); renderVhfUsers(); });
   db.ref("sectors").on("value", snap => { state.sectors = snap.val() || {}; renderPvd(); renderAtcList(); });
   db.ref("atc_online").on("value", snap => { state.atcOnline = snap.val() || {}; renderAtcList(); });
   db.ref("com_log").limitToLast(80).on("value", snap => { renderComLog(snap.val() || {}); });
@@ -588,6 +591,8 @@ function attachFirebaseListeners(){
   // Firebase du type ".read"/".write": "auth != null && ATC" sur "atc_strips" pour que seuls
   // les contrôleurs authentifiés y aient accès — les pilotes n'ont besoin que de "flights".
   db.ref("atc_strips").on("value", snap => { state.atcStrips = snap.val() || {}; renderFplPanel(); renderStrips(); renderAircraftOnMap(); });
+  db.ref("waypoints").on("value", snap => { state.fbWaypoints = snap.val() || {}; if (state.procFixesShown) loadProcedureFixes(); });
+  db.ref("procedures").on("value", snap => { state.fbProcedures = snap.val() || {}; if (state.procFixesShown) loadProcedureFixes(); });
 }
 
 /* Connexion / prise de position ------------------------------------------ */
@@ -646,9 +651,11 @@ function initMap(){
   vectorLayer = L.layerGroup().addTo(map);
   rwyPvdLayer = L.layerGroup().addTo(map);
 
+  let openaipRefreshTimer = null;
   map.on("moveend zoomend", () => {
-    refreshOpenaipLayers();
     drawRunwayOnPvd();
+    clearTimeout(openaipRefreshTimer);
+    openaipRefreshTimer = setTimeout(refreshOpenaipLayers, 350);
   });
 
   drawDistanceRings();
@@ -785,6 +792,33 @@ function aircraftIcon(headingDeg, selected, emer){
   });
 }
 const aircraftMarkers = {};
+
+/* Avion fictif pour tester l'affichage des étiquettes (bouton "🧪 Trafic test").
+   N'écrit jamais dans Firebase — state.testFlights est fusionné localement par-dessus
+   ce que renvoie Firebase (voir db.ref("flights").on("value", ...)) pour survivre au
+   prochain sync. Reprend les valeurs de l'exemple fourni (FHEBN / DA40 / LFRS). */
+function spawnTestTraffic(){
+  const id = "FHEBN";
+  if (state.testFlights[id]){ delete state.testFlights[id]; delete state.flights[id]; $("btn-test-traffic").classList.remove("active-mode"); showToast("Trafic test retiré."); }
+  else {
+    const jitterLat = (Math.random() - 0.5) * 0.03;
+    const jitterLon = (Math.random() - 0.5) * 0.05;
+    state.testFlights[id] = {
+      latitude: state.station.lat + jitterLat,
+      longitude: state.station.lon + jitterLon,
+      heading_deg: 340, ground_speed_kt: 85,
+      altitude_ft: 3750, aircraft_type: "DA40",
+      route: "MAIN GAUCHE 03", departure: "LFRS", arrival: "LFRS",
+      transponder: "7000", com1: state.vhfFreq,
+    };
+    state.flights[id] = state.testFlights[id];
+    $("btn-test-traffic").classList.add("active-mode");
+    showToast("Trafic test FHEBN ajouté près de la position contrôlée.");
+  }
+  renderTmChips(); renderFplPanel(); renderAircraftOnMap(); renderVhfUsers();
+}
+$("btn-test-traffic").addEventListener("click", spawnTestTraffic);
+
 function renderAircraftOnMap(){
   if (!map) return;
   const seen = new Set();
@@ -809,7 +843,7 @@ function renderAircraftOnMap(){
     if (!mk){
       mk = L.marker(latlng, { icon: aircraftIcon(f.heading_deg, selected, emer) }).addTo(aircraftLayer);
       mk.on("click", () => selectAircraft(callsign));
-      mk.on("contextmenu", (e) => { L.DomEvent.preventDefault(e); openAcContextMenu(e.originalEvent, callsign); });
+      mk.on("contextmenu", (e) => { L.DomEvent.stop(e); openAcContextMenu(e.originalEvent, callsign); });
       aircraftMarkers[callsign] = mk;
     } else {
       mk.setLatLng(latlng);
@@ -877,6 +911,9 @@ function openAcContextMenu(evt, callsign){
   const item2 = el("div", "item", "Sélectionner");
   item2.addEventListener("click", () => { selectAircraft(callsign); closeAcContextMenu(); });
   menu.appendChild(item2);
+  const item3 = el("div", "item", "QDM (vecteur radar)");
+  item3.addEventListener("click", () => { startQdm(callsign); closeAcContextMenu(); });
+  menu.appendChild(item3);
   document.body.appendChild(menu);
   const x = Math.min(evt.clientX, window.innerWidth - menu.offsetWidth - 8);
   const y = Math.min(evt.clientY, window.innerHeight - menu.offsetHeight - 8);
@@ -1011,39 +1048,98 @@ function toggleAirspaces(){
     map.removeLayer(airspacesLayer);
   }
 }
-// SID/STAR & fixes RNAV enroute : OpenAIP (base publique gratuite) ne fournit
-// AUCUNE donnée de procédures IFR (SID/STAR) ni de fixes RNAV enroute — ce
-// n'est pas dans son schéma (confirmé sur le schéma officiel de l'API :
-// endpoints disponibles = Airports, Airport Reporting Points, Airspaces,
-// Hotspots, Navaids, Hang Gliding Sites, Obstacles, RC Airfields, Special
-// Rules Areas — rien sur les procédures). Ces données viennent normalement
-// de bases proprio (Jeppesen/Navigraph/AIRAC). Faute de mieux, ce calque lit
-// une table LOCALE et éditable par vous : window.PROCEDURE_FIXES dans
-// aurora-config.js. Voir le gabarit d'exemple fourni dans ce fichier.
+// SID/STAR & fixes RNAV enroute (les points "DIRECT <FIX>" donnés aux pilotes IFR) :
+// OpenAIP (base publique gratuite) ne fournit AUCUNE donnée de procédures IFR ni de
+// fixes RNAV enroute — confirmé sur le schéma officiel de l'API : endpoints
+// disponibles = Airports, Airport Reporting Points (VFR uniquement), Airspaces,
+// Hotspots, Navaids (VOR/NDB/DME uniquement), Hang Gliding Sites, Obstacles,
+// RC Airfields, Special Rules Areas — rien sur les procédures IFR. Ces données
+// viennent normalement de bases proprio (Jeppesen/Navigraph, cycle AIRAC), pas
+// d'une base communautaire libre.
+//
+// Solution pratique : ce calque (bouton "MRV") est saisi PAR VOUS, directement
+// sur la carte, sans toucher au code — clic droit à l'endroit du fixe (repéré sur
+// votre carte VAC/AIP) → "Ajouter un fixe ici" → nom (ANG, BALNI, TIPIK...).
+// Stocké dans le navigateur (localStorage), par aérodrome. Vous pouvez aussi
+// pré-remplir des points fixes pour toute l'équipe via window.PROCEDURE_FIXES
+// dans aurora-config.js (les deux sources sont fusionnées).
 function toggleProcedureFixes(){
   state.procFixesShown = !state.procFixesShown;
   if (state.procFixesShown){
     map.addLayer(procFixesLayer);
     loadProcedureFixes();
+    if (!map._procFixesCtxBound){
+      map._procFixesCtxBound = true;
+      map.on("contextmenu", (e) => { if (state.procFixesShown) openMapAddFixMenu(e); });
+    }
   } else {
     map.removeLayer(procFixesLayer);
   }
 }
+function procFixesStorageKey(icao){ return `aurora_proc_fixes_${icao}`; }
+function loadLocalProcFixes(icao){
+  try{ return JSON.parse(localStorage.getItem(procFixesStorageKey(icao)) || "[]"); }
+  catch(e){ return []; }
+}
+function saveLocalProcFixes(icao, list){
+  try{ localStorage.setItem(procFixesStorageKey(icao), JSON.stringify(list)); }
+  catch(e){ showToast("Impossible d'enregistrer localement (stockage du navigateur plein/bloqué).", true); }
+}
 function loadProcedureFixes(){
   procFixesLayer.clearLayers();
-  const table = window.PROCEDURE_FIXES || {};
-  const forIcao = table[state.station.icao] || [];
-  if (!forIcao.length){
-    showToast(`Aucun fixe SID/STAR renseigné pour ${state.station.icao || "cette position"} dans window.PROCEDURE_FIXES (aurora-config.js). OpenAIP ne fournit pas ces données — il faut les saisir vous-même (voir gabarit dans le fichier).`, false);
-    return;
+  const icao = state.station.icao;
+  // Priorité : points créés dans index.html (Sector Manager) et enregistrés dans
+  // Firebase (waypoints/, partagés entre TOUS les postes) > table statique
+  // aurora-config.js (partagée mais figée dans le code) > ajouts locaux au
+  // navigateur (localStorage, pratiques mais non partagés).
+  const fromFirebase = Object.values(state.fbWaypoints || {}).filter(p => p.lat != null && p.lon != null && withinControllerFocus([p.lat, p.lon]));
+  const fromConfig = (window.PROCEDURE_FIXES || {})[icao] || [];
+  const fromLocal = icao ? loadLocalProcFixes(icao) : [];
+  const all = [...fromFirebase, ...fromConfig, ...fromLocal];
+  if (!all.length && !Object.keys(state.fbProcedures || {}).length){
+    showToast(`Aucun fixe IFR/RNAV pour ${icao || "cette position"} — ajoutez-en depuis Sector Manager (index.html) ou clic droit ici (calque MRV actif).`, false);
   }
-  forIcao.forEach(pt => {
-    if (pt.lat == null || pt.lon == null) return;
-    L.marker([pt.lat, pt.lon], {
+  all.forEach((pt, idx) => {
+    const marker = L.marker([pt.lat, pt.lon], {
       icon: L.divIcon({ className: "wpt-marker", iconSize: [70, 26], iconAnchor: [4, 4],
         html: `<div class="wpt-diamond" style="background:#c78bff; border-color:#7a4fbf; transform:rotate(45deg);"></div><div class="wpt-label"><span style="color:#c78bff;">${escapeHtml(pt.name || "")}</span></div>` })
     }).addTo(procFixesLayer);
+    // Seuls les fixes stockés localement (pas Firebase, pas la config) peuvent
+    // être supprimés depuis ici — pour Firebase, on gère ça dans Sector Manager.
+    const isLocal = idx >= fromFirebase.length + fromConfig.length;
+    if (isLocal){
+      marker.on("contextmenu", (e) => {
+        L.DomEvent.stop(e);
+        if (confirm(`Supprimer le fixe "${pt.name}" ?`)){
+          const list = loadLocalProcFixes(icao);
+          const i2 = list.findIndex(p => p.name === pt.name && p.lat === pt.lat && p.lon === pt.lon);
+          if (i2 >= 0){ list.splice(i2, 1); saveLocalProcFixes(icao, list); loadProcedureFixes(); }
+        }
+      });
+    }
   });
+  // Routes SID/STAR (procedures/ sur Firebase, créées dans Sector Manager) : tracées
+  // en orange (SID/départ) ou bleu (STAR/arrivée), filtrées sur l'aérodrome courant.
+  Object.values(state.fbProcedures || {}).forEach(rec => {
+    if (!icao || rec.icao !== icao || !rec.fixes || rec.fixes.length < 2) return;
+    const isStar = rec.kind === "STAR";
+    const color = isStar ? "#4fb3ff" : "#ffb23e";
+    L.polyline(rec.fixes.map(f => [f.lat, f.lon]), { color, weight: 2, opacity: 0.85 })
+      .addTo(procFixesLayer)
+      .bindTooltip(`${rec.name} (${rec.kind}${rec.runway ? " " + rec.runway : ""})`, { sticky: true });
+  });
+}
+function openMapAddFixMenu(e){
+  L.DomEvent.stop(e);
+  const icao = state.station.icao;
+  if (!icao){ showToast("Chargez d'abord une position (callsign) avant d'ajouter un fixe.", true); return; }
+  const name = prompt("Nom du fixe (ex: ANG, BALNI, TIPIK)")?.trim().toUpperCase();
+  if (!name) return;
+  const list = loadLocalProcFixes(icao);
+  list.push({ name, lat: e.latlng.lat, lon: e.latlng.lng });
+  saveLocalProcFixes(icao, list);
+  loadProcedureFixes();
+  showToast(`Fixe "${name}" ajouté. Clic droit dessus pour le supprimer.`);
 }
 
 // Rayon (NM) autour de la position ATC au-delà duquel on masque les espaces aériens
@@ -1096,13 +1192,24 @@ async function openaipFetchList(endpoint, extraParams){
 // plus de contrainte de taille de bbox puisqu'on n'envoie plus bbox du tout sur
 // ces deux endpoints (voir currentPosDist ci-dessus). Seuls /airports et
 // /airspaces gardent la contrainte "dézoomez pas trop" liée à leur bbox.
+// Compteurs de génération : à chaque nouvel appel loadX(), on incrémente son
+// compteur puis on vérifie, une fois la réponse réseau arrivée, qu'aucun appel
+// plus récent n'a été lancé entre-temps. Sinon on jette la réponse (obsolète)
+// sans toucher à la couche déjà affichée. C'est ça qui empêche les TMA/CTR/
+// points VFR de "depop/repop" : sans ça, une requête lente qui répond après
+// une requête plus récente (chaîne de proxys CORS à latence variable) pouvait
+// effacer l'affichage à jour et le remplacer par une zone déjà quittée.
+const openaipGen = { navaids: 0, "reporting-points": 0, airspaces: 0 };
+
 function pointIdentifier(item){
   return item.identifier || item.name || item.designator || item.tradeName || item.icaoCode || "";
 }
 async function loadWaypoints(){
   if (!window.OPENAIP_API_KEY) return;
+  const myGen = ++openaipGen.navaids;
   try{
     const items = await openaipFetchList("navaids");
+    if (myGen !== openaipGen.navaids) return; // une requête plus récente a déjà répondu
     console.debug(`[OpenAIP] navaids : ${items.length} résultat(s) sur la zone visible.`);
     waypointsLayer.clearLayers();
     let shown = 0;
@@ -1120,7 +1227,7 @@ async function loadWaypoints(){
     });
     if (!shown) showToast("OpenAIP : aucun VOR/NDB référencé dans le rayon visible (base communautaire, couverture variable).", false);
   } catch(err){
-    showToast("OpenAIP (VOR/NDB) : " + err.message, true);
+    if (myGen === openaipGen.navaids) showToast("OpenAIP (VOR/NDB) : " + err.message, true);
   }
 }
 function navaidTypeLabel(t){
@@ -1130,8 +1237,10 @@ function navaidTypeLabel(t){
 
 async function loadReportingPoints(){
   if (!window.OPENAIP_API_KEY) return;
+  const myGen = ++openaipGen["reporting-points"];
   try{
     const items = await openaipFetchList("reporting-points");
+    if (myGen !== openaipGen["reporting-points"]) return;
     console.debug(`[OpenAIP] reporting-points : ${items.length} résultat(s) sur la zone visible.`);
     reportingPointsLayer.clearLayers();
     let shown = 0;
@@ -1146,20 +1255,24 @@ async function loadReportingPoints(){
       }).addTo(reportingPointsLayer);
       shown++;
     });
-    if (!shown) showToast("OpenAIP : aucun point de report VFR référencé dans le rayon visible (base communautaire — les fixes IFR type ANG/BALNI/TIPIK n'en font pas partie, voir bouton SID/STAR).", false);
+    if (!shown) showToast("OpenAIP : aucun point de report VFR référencé dans le rayon visible (base communautaire — les fixes IFR type ANG/BALNI/TIPIK n'en font pas partie, voir bouton MRV).", false);
   } catch(err){
-    showToast("OpenAIP (points RNAV/VFR) : " + err.message, true);
+    if (myGen === openaipGen["reporting-points"]) showToast("OpenAIP (points RNAV/VFR) : " + err.message, true);
   }
 }
 
 async function loadAirspaces(){
   if (!window.OPENAIP_API_KEY) return;
   if (map.getZoom() < MIN_ZOOM_OPENAIP){
-    showToast(`Zoomez davantage (niveau ${MIN_ZOOM_OPENAIP}+) pour charger les espaces aériens — OpenAIP refuse les zones trop grandes (HTTP 400).`, true);
+    // Pas de toast ici : cette fonction est aussi appelée automatiquement à
+    // chaque pan/zoom (refreshOpenaipLayers), un toast à répétition serait
+    // pénible. On garde simplement la dernière couche affichée telle quelle.
     return;
   }
+  const myGen = ++openaipGen.airspaces;
   try{
     const items = await openaipFetchList("airspaces");
+    if (myGen !== openaipGen.airspaces) return;
     airspacesLayer.clearLayers();
     items.forEach(item => {
       const geo = item.geometry;
@@ -1175,7 +1288,7 @@ async function loadAirspaces(){
       });
     });
   } catch(err){
-    showToast("OpenAIP (espaces aériens) : " + err.message, true);
+    if (myGen === openaipGen.airspaces) showToast("OpenAIP (espaces aériens) : " + err.message, true);
   }
 }
 
