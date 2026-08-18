@@ -65,6 +65,7 @@ button{ font-family:inherit; }
 .btn.primary:hover{ background:#2c6d3c; }
 .btn.danger{ background:#5b2427; border-color:#863738; color:#f5c9cc; }
 .btn.danger:hover{ background:#6d2c2f; }
+.btn.active-mode{ background:var(--accent); color:#06170f; border-color:var(--accent); }
 .led{ width:8px; height:8px; border-radius:50%; background:#3a3a3a; box-shadow:inset 0 0 0 1px #000; }
 .led.on{ background:var(--ok); box-shadow:0 0 6px var(--ok); }
 .led.mid{ background:var(--warn); box-shadow:0 0 6px var(--warn); }
@@ -110,6 +111,17 @@ button{ font-family:inherit; }
 .ac-wrap{ position:relative; display:flex; align-items:flex-start; cursor:pointer; pointer-events:auto; padding-left:16px; }
 .ac-wrap::before{ content:""; position:absolute; left:0; top:7px; width:14px; height:1px;
   background:rgba(230,230,232,.55); transform-origin:0 50%; transform:rotate(28deg); }
+/* Le tooltip Leaflet a par défaut un fond blanc, une bordure, une ombre et une
+   petite flèche ("bulle de BD") — sans ce bloc, l'étiquette d'un avion apparaît
+   dans cette bulle blanche au lieu du style radar recherché. On neutralise
+   entièrement le chrome par défaut de Leaflet pour ne garder que .ac-tag. */
+.leaflet-tooltip.ac-tooltip{
+  background: transparent !important; border: none !important; box-shadow: none !important;
+  padding: 0 !important; color: inherit !important; border-radius: 0 !important;
+  pointer-events: auto !important;
+}
+.leaflet-tooltip.ac-tooltip::before{ display: none !important; content: none !important; }
+
 .ac-tag{ font-family:var(--mono); font-size:10px; line-height:1.35; white-space:nowrap; }
 .ac-tag .callsign{ display:block; color:var(--accent); font-weight:700; text-shadow:0 0 3px #000,0 0 4px #000; }
 .ac-tag .ln{ display:block; color:var(--text-dim); text-shadow:0 0 3px #000,0 0 4px #000; }
@@ -298,6 +310,7 @@ table.dat tr.sel td{ background:#3a3316; }
 
   <div id="workspace">
     <div id="pvd-map"></div>
+    <button id="btn-test-traffic" class="btn" style="position:absolute; left:10px; bottom:10px; z-index:900; font-size:11px; padding:5px 9px;" title="Ajoute/retire un avion fictif pour tester l'affichage">🧪 Trafic test</button>
 
     <div id="hud">
       <div class="qnh-line" id="hud-qnh">—</div>
